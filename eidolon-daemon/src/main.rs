@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -76,7 +77,14 @@ async fn main() {
 
     tracing::info!("listening on {}", bind_addr);
 
-    if let Err(e) = axum::serve(listener, router).await {
+    // Use into_make_service_with_connect_info so ConnectInfo<SocketAddr> is
+    // available in middleware (needed for /gate/check localhost-only bypass).
+    if let Err(e) = axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    {
         eprintln!("[eidolon-daemon] server error: {}", e);
         std::process::exit(1);
     }

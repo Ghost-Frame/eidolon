@@ -39,6 +39,13 @@ pub async fn brain_query(
         ));
     }
 
+    if req.query.len() > 4096 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": "query too long (max 4096 chars)"})),
+        ));
+    }
+
     // Call Engram /embed to get embedding vector
     let embed_url = format!("{}/embed", state.config.engram.url);
     let embed_resp = state.http_client

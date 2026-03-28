@@ -77,6 +77,23 @@ fn build_settings_json(hook_path: &str) -> serde_json::Value {
     })
 }
 
+/// RAII guard that removes a directory tree when dropped.
+/// Spawns a detached tokio task so cleanup is non-blocking and
+/// fires even if the caller returns early via `?`.
+struct TempDirCleanup {
+    path: String,
+}
+
+impl Drop for TempDirCleanup {
+    fn drop(&mut self) {
+        let dir = self.path.clone();
+        // spawn a fire-and-forget task; ignore errors (best-effort cleanup)
+        tokio::spawn(async move {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+        });
+    }
+}
+
 pub async fn run_claude_code(
     state: &Arc<AppState>,
     session_id: &str,
@@ -90,6 +107,22 @@ pub async fn run_claude_code(
     tokio::fs::create_dir_all(&format!("{}/.claude", session_dir))
         .await
         .map_err(|e| format!("failed to create session dir: {}", e))?;
+
+    // Restrict session dir to owner-only (0o700) to protect hook script and keys
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(
+            &session_dir,
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .await
+        .map_err(|e| format!("failed to set session dir permissions: {}", e))?;
+    }
+
+    // Register cleanup guard -- directory is removed when this guard drops,
+    // regardless of which exit path (success, error, panic) is taken.
+    let _cleanup = TempDirCleanup { path: session_dir.clone() };
 
     // Write CLAUDE.md with living prompt
     tokio::fs::write(format!("{}/CLAUDE.md", session_dir), living_prompt)
@@ -212,8 +245,7 @@ pub async fn run_claude_code(
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
-    // Cleanup temp dir
-    let _ = tokio::fs::remove_dir_all(&session_dir).await;
+    // _cleanup guard drops here and removes session_dir asynchronously
 
     Ok(exit_status.code().unwrap_or(-1))
 }

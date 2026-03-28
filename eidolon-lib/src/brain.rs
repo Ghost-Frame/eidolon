@@ -147,6 +147,12 @@ impl Brain {
             mem.activation = 0.5;
         }
 
+        // Clear raw embeddings now that PCA projection is done -- free the 1024-dim vecs
+        for mem in &mut memories {
+            mem.embedding.clear();
+            mem.embedding.shrink_to_fit();
+        }
+
         // Build memory index
         let mut memory_index = HashMap::new();
         for (i, m) in memories.iter().enumerate() {
@@ -315,8 +321,8 @@ impl Brain {
                 self.memories[idx].decay_factor = apply_recall_boost(self.memories[idx].decay_factor);
                 self.memories[idx].access_count += 1;
                 self.memories[idx].last_activated = now;
-                // Boost the substrate strength too
-                self.substrate.store(*id, &self.memories[idx].pattern.clone(), self.memories[idx].decay_factor);
+                // Boost the substrate strength too (update in-place, no realloc)
+                self.substrate.update_strength(*id, self.memories[idx].decay_factor);
             }
         }
 

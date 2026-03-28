@@ -56,6 +56,15 @@ impl HopfieldSubstrate {
         self.id_to_index.insert(id, idx);
     }
 
+    /// Update only the strength of an existing pattern (avoids full realloc).
+    pub fn update_strength(&mut self, id: i64, new_strength: f32) {
+        if let Some(&idx) = self.id_to_index.get(&id) {
+            if idx < self.strengths.len() {
+                self.strengths[idx] = new_strength;
+            }
+        }
+    }
+
     /// Remove a pattern by id. Rebuilds index.
     pub fn remove(&mut self, id: i64) {
         if let Some(&idx) = self.id_to_index.get(&id) {

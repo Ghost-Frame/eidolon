@@ -59,12 +59,12 @@ pub fn parse_datetime_approx(s: &str) -> f64 {
     total_days * 86400.0 + hours * 3600.0 + mins * 60.0 + secs
 }
 
-/// Current unix epoch approximation (days since 2026-03-27 as reference).
-/// Returns days since epoch as f64 for age computation.
+/// Current unix time as seconds since UNIX_EPOCH.
 pub fn now_unix() -> f64 {
-    // 2026-03-27 = approximately 56 years after 1970
-    // More precisely: parse from a known reference
-    parse_datetime_approx("2026-03-27T00:00:00Z")
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
 }
 
 /// Resolve interference between two memories at contradiction edges.

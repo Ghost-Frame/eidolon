@@ -8,6 +8,7 @@ use super::templates;
 const SCRUB_PATTERNS: &[&str] = &[
     "password", "passwd", "secret", "token", "api_key", "apikey",
     "private_key", "bearer", "authorization", "credential",
+    "ssh_key", "ssh key", "private key", "passphrase",
 ];
 
 #[allow(dead_code)]
@@ -18,7 +19,12 @@ pub struct MemorySummary {
     pub activation: f32,
 }
 
-fn scrub_credentials(text: &str) -> String {
+fn scrub_credentials(text: &str, category: &str) -> String {
+    // If the memory's category itself signals credential content, redact everything
+    if category.to_lowercase().contains("credential") {
+        return "[CREDENTIAL REDACTED -- use credential manager]\n".to_string();
+    }
+
     let mut result = String::with_capacity(text.len());
     for line in text.lines() {
         let line_lower = line.to_lowercase();
@@ -55,10 +61,11 @@ async fn search_engram(
                 .ok()
                 .and_then(|v| v["results"].as_array().map(|arr| {
                     arr.iter().filter_map(|m| {
+                        let category = m["category"].as_str()?.to_string();
                         Some(MemorySummary {
                             id: m["id"].as_i64().unwrap_or(0),
-                            content: scrub_credentials(m["content"].as_str()?),
-                            category: m["category"].as_str()?.to_string(),
+                            content: scrub_credentials(m["content"].as_str()?, &category),
+                            category,
                             activation: m["score"].as_f64().unwrap_or(0.5) as f32,
                         })
                     }).collect()

@@ -85,10 +85,13 @@ impl PcaTransform {
                 v /= norm;
             }
 
-            // Deflate: residual -= eigenvalue * v v^T
+            // Deflate: residual -= eigenvalue * v v^T  (in-place, avoids 2GB alloc)
             let eigenvalue = v.dot(&residual.dot(&v));
-            let outer = outer_product(&v, &v) * eigenvalue;
-            residual = residual - outer;
+            for i in 0..n_features {
+                for j in 0..n_features {
+                    residual[[i, j]] -= eigenvalue * v[i] * v[j];
+                }
+            }
 
             components.push(v);
         }
@@ -142,11 +145,6 @@ impl PcaTransform {
             },
         )
     }
-}
-
-fn outer_product(a: &Array1<f32>, b: &Array1<f32>) -> Array2<f32> {
-    let n = a.len();
-    Array2::from_shape_fn((n, n), |(i, j)| a[i] * b[j])
 }
 
 pub fn l2_normalize(mut v: Array1<f32>) -> Array1<f32> {

@@ -57,10 +57,14 @@ std::vector<BrainMemory> load_memories(sqlite3* db, std::string& errmsg) {
         mem.created_at = col_str(5);
         int blob_bytes = sqlite3_column_bytes(stmt, 6);
         const void* blob = sqlite3_column_blob(stmt, 6);
-        if (blob && blob_bytes > 0) {
-            int n_floats = blob_bytes / 4;
-            mem.embedding.resize(n_floats);
+        // Validate that the blob is exactly RAW_DIM floats to prevent
+        // buffer overread/overwrite from a corrupt or truncated database row.
+        if (blob && blob_bytes == RAW_DIM * static_cast<int>(sizeof(float))) {
+            mem.embedding.resize(RAW_DIM);
             std::memcpy(mem.embedding.data(), blob, blob_bytes);
+        } else if (blob && blob_bytes > 0) {
+            // Unexpected size -- skip embedding rather than risk memory corruption
+            errmsg = "warning: skipped embedding with unexpected blob size";
         }
         mem.activation   = 0.0f;
         mem.decay_factor = 1.0f;
@@ -201,6 +205,12 @@ bool load_pca_state(sqlite3* db, PcaTransform& pca, std::string& errmsg) {
     if (!load_blob("pca_mean", mean_buf)) return false;
     int n_comp;
     std::memcpy(&n_comp, nc_buf.data(), sizeof(int));
+    // Validate n_comp is within the expected range [1, BRAIN_DIM]
+    // to prevent resize/memcpy with an adversarially large or zero value.
+    if (n_comp < 1 || n_comp > BRAIN_DIM) {
+        errmsg = "PCA n_components out of valid range [1, BRAIN_DIM]";
+        return false;
+    }
     int raw_dim = static_cast<int>(mean_buf.size() / sizeof(float));
     pca.mean.resize(raw_dim);
     std::memcpy(pca.mean.data(), mean_buf.data(), mean_buf.size());

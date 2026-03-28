@@ -7,6 +7,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -27,9 +28,23 @@ async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    // Skip auth for health and gate/check (localhost-only, called by hooks)
-    if req.uri().path() == "/health" || req.uri().path() == "/gate/check" {
+    // Skip auth for health check unconditionally
+    if req.uri().path() == "/health" {
         return Ok(next.run(req).await);
+    }
+
+    // /gate/check is called by localhost hook scripts.
+    // Only bypass auth when the request originates from loopback.
+    if req.uri().path() == "/gate/check" {
+        let is_local = req
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|ci| ci.0.ip().is_loopback())
+            .unwrap_or(false);
+        if is_local {
+            return Ok(next.run(req).await);
+        }
+        // Non-local gate requests fall through to normal auth below
     }
 
     let auth_header = req.headers()
@@ -43,7 +58,7 @@ async fn auth_middleware(
         ""
     };
 
-    // Timing-safe comparison
+    // Timing-safe comparison via SHA-256 digest equality
     if !constant_time_eq(provided_key.as_bytes(), state.config.api_key.as_bytes()) {
         return Err((
             StatusCode::UNAUTHORIZED,
@@ -54,16 +69,19 @@ async fn auth_middleware(
     Ok(next.run(req).await)
 }
 
-/// Constant-time byte comparison to prevent timing attacks on API key
+/// Constant-time byte comparison using SHA-256 digests.
+/// Hashing both inputs to a fixed-length output prevents length-leaking
+/// side-channels present in naive early-exit comparisons.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
+    let ha = Sha256::digest(a);
+    let hb = Sha256::digest(b);
+    // Compare 32-byte digests without early exit
     let mut result: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
+    for (x, y) in ha.iter().zip(hb.iter()) {
         result |= x ^ y;
     }
-    result == 0
+    // Length check performed after the constant-time digest comparison
+    result == 0 && a.len() == b.len()
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
