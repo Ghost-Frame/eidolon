@@ -1,0 +1,206 @@
+use ndarray::Array1;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+pub const BRAIN_DIM: usize = 512;
+pub const RAW_DIM: usize = 1024;
+
+#[derive(Debug, Clone)]
+pub struct BrainMemory {
+    pub id: i64,
+    pub content: String,
+    pub category: String,
+    pub source: String,
+    pub importance: i32,
+    pub created_at: String,
+    pub embedding: Vec<f32>,
+    pub pattern: Array1<f32>,
+    pub activation: f32,
+    pub last_activated: f64,
+    pub access_count: u32,
+    pub decay_factor: f32,
+    pub tags: Vec<String>,
+}
+
+impl BrainMemory {
+    pub fn content_preview(&self, max_len: usize) -> String {
+        if self.content.len() <= max_len {
+            self.content.clone()
+        } else {
+            format!("{}...", &self.content[..max_len])
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EdgeType {
+    Association,
+    Temporal,
+    Contradiction,
+}
+
+impl EdgeType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            EdgeType::Association => "association",
+            EdgeType::Temporal => "temporal",
+            EdgeType::Contradiction => "contradiction",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "temporal" => EdgeType::Temporal,
+            "contradiction" => EdgeType::Contradiction,
+            _ => EdgeType::Association,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BrainEdge {
+    pub source_id: i64,
+    pub target_id: i64,
+    pub weight: f32,
+    pub edge_type: EdgeType,
+    pub created_at: String,
+}
+
+// JSON protocol types
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+pub enum Command {
+    Init {
+        seq: Option<u64>,
+        db_path: String,
+        data_dir: Option<String>,
+    },
+    Query {
+        seq: Option<u64>,
+        embedding: Vec<f32>,
+        top_k: Option<usize>,
+        beta: Option<f32>,
+        spread_hops: Option<usize>,
+    },
+    Absorb {
+        seq: Option<u64>,
+        id: i64,
+        content: String,
+        category: String,
+        source: String,
+        importance: i32,
+        created_at: String,
+        embedding: Vec<f32>,
+        tags: Option<Vec<String>>,
+    },
+    DecayTick {
+        seq: Option<u64>,
+        ticks: Option<u32>,
+    },
+    GetStats {
+        seq: Option<u64>,
+    },
+    Shutdown {
+        seq: Option<u64>,
+    },
+}
+
+impl Command {
+    pub fn seq(&self) -> Option<u64> {
+        match self {
+            Command::Init { seq, .. } => *seq,
+            Command::Query { seq, .. } => *seq,
+            Command::Absorb { seq, .. } => *seq,
+            Command::DecayTick { seq, .. } => *seq,
+            Command::GetStats { seq, .. } => *seq,
+            Command::Shutdown { seq, .. } => *seq,
+        }
+    }
+
+    pub fn cmd_name(&self) -> &str {
+        match self {
+            Command::Init { .. } => "init",
+            Command::Query { .. } => "query",
+            Command::Absorb { .. } => "absorb",
+            Command::DecayTick { .. } => "decay_tick",
+            Command::GetStats { .. } => "get_stats",
+            Command::Shutdown { .. } => "shutdown",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Response {
+    pub ok: bool,
+    pub cmd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+
+impl Response {
+    pub fn ok(cmd: &str, seq: Option<u64>, data: Value) -> Self {
+        Response {
+            ok: true,
+            cmd: cmd.to_string(),
+            seq,
+            error: None,
+            data: Some(data),
+        }
+    }
+
+    pub fn err(cmd: &str, seq: Option<u64>, error: String) -> Self {
+        Response {
+            ok: false,
+            cmd: cmd.to_string(),
+            seq,
+            error: Some(error),
+            data: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ActivatedMemory {
+    pub id: i64,
+    pub content: String,
+    pub category: String,
+    pub activation: f32,
+    pub source: String,
+    pub hops: usize,
+    pub decay_factor: f32,
+    pub importance: i32,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContradictionPair {
+    pub winner_id: i64,
+    pub loser_id: i64,
+    pub winner_activation: f32,
+    pub loser_activation: f32,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QueryResult {
+    pub activated: Vec<ActivatedMemory>,
+    pub contradictions: Vec<ContradictionPair>,
+    pub total_patterns: usize,
+    pub query_time_ms: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatsResult {
+    pub total_patterns: usize,
+    pub total_edges: usize,
+    pub avg_activation: f32,
+    pub avg_decay_factor: f32,
+    pub health_distribution: std::collections::HashMap<String, usize>,
+    pub top_activated: Vec<serde_json::Value>,
+    pub bottom_activated: Vec<serde_json::Value>,
+}

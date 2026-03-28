@@ -1,0 +1,25 @@
+# Build artifacts
+rust/target/
+cpp/build/
+*.o
+*.so
+*.dylib
+*.exe
+
+# Data
+data/*.db
+data/*.db-*
+
+# Node
+node_modules/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
