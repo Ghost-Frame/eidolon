@@ -6,10 +6,17 @@
 #include "brain/decay.hpp"
 #include "brain/absorb.hpp"
 #include "brain/persistence.hpp"
+#include "brain/dreaming.hpp"
+#include "brain/instincts.hpp"
+
+#ifdef BRAIN_EVOLUTION
+#include "brain/evolution.hpp"
+#endif
 
 #include <nlohmann/json.hpp>
 
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -34,7 +41,13 @@ public:
     ConnectionGraph graph;
     sqlite3* db = nullptr;
     std::string db_path;
+    std::string data_dir;
     bool initialized = false;
+    uint64_t dream_cycle_count = 0;
+
+#ifdef BRAIN_EVOLUTION
+    EvolutionState evolution;
+#endif
 
     // Initialize from brain.db
     std::string init(const std::string& path) {
@@ -52,7 +65,35 @@ public:
 
         if (memories.empty()) {
             initialized = true;
-            return ""; // Empty brain is OK
+            // If instincts.bin exists, apply as ghost pre-training
+            if (!data_dir.empty()) {
+                std::string inst_path = data_dir + "/instincts.bin";
+                auto corpus_opt = brain::load_instincts(inst_path);
+                if (corpus_opt.has_value()) {
+                    auto& corpus = corpus_opt.value();
+                    // Bootstrap PCA from corpus embeddings
+                    std::vector<int> valid_idx;
+                    for (int i = 0; i < (int)corpus.memories.size(); ++i) {
+                        if ((int)corpus.memories[i].embedding.size() == RAW_DIM)
+                            valid_idx.push_back(i);
+                    }
+                    if ((int)valid_idx.size() >= 2) {
+                        int n = std::min((int)valid_idx.size(), 50);
+                        Eigen::MatrixXf embed_matrix(n, RAW_DIM);
+                        for (int r = 0; r < n; ++r) {
+                            int mi = valid_idx[r];
+                            embed_matrix.row(r) = Eigen::Map<const Eigen::VectorXf>(
+                                corpus.memories[mi].embedding.data(), RAW_DIM).transpose();
+                        }
+                        try { pca.fit(embed_matrix, BRAIN_DIM); } catch (...) {}
+                    }
+                    brain::apply_instincts(memories, memory_index, substrate, graph, pca, corpus);
+                    fprintf(stderr, "[brain] applied instincts: %zu ghost patterns\n", memories.size());
+                } else {
+                    fprintf(stderr, "[brain] no instincts.bin at %s, starting empty\n", inst_path.c_str());
+                }
+            }
+            return "";
         }
 
         // Build memory_index
@@ -107,6 +148,11 @@ public:
         for (auto& e : edges) {
             graph.add_edge(e.source_id, e.target_id, e.weight, e.edge_type);
         }
+
+        // Load evolution state if feature is enabled
+#ifdef BRAIN_EVOLUTION
+        evolution = EvolutionState::load_state(db);
+#endif
 
         initialized = true;
         return "";
@@ -170,6 +216,13 @@ public:
                 }
             }
         }
+
+        // Evolution post-processing: apply learned node weights
+#ifdef BRAIN_EVOLUTION
+        for (auto& [id, act] : merged) {
+            act *= evolution.get_node_weight(id);
+        }
+#endif
 
         // Apply decay factor weight
         double now_epoch = static_cast<double>(std::time(nullptr));
@@ -305,6 +358,16 @@ public:
 
         absorb_memory(mem, all_ptrs, pca, substrate, graph);
 
+        // Check ghost replacement: remove ghosts similar to this real memory
+        {
+            size_t removed = brain::check_ghost_replacement(
+                mem.pattern, memories, memory_index, substrate, graph);
+            if (removed > 0) {
+                fprintf(stderr, "[brain] absorbed real memory id=%lld, replaced %zu ghost(s)\n",
+                        (long long)mem.id, removed);
+            }
+        }
+
         // Register in memories list
         size_t new_idx = memories.size();
         memories.push_back(std::move(mem));
@@ -350,6 +413,12 @@ public:
             {"removed_patterns", removed},
             {"remaining_patterns", (int)memories.size()}
         };
+    }
+
+    // Dream cycle
+    brain::DreamCycleResult run_dream_cycle() {
+        ++dream_cycle_count;
+        return brain::dream_cycle(substrate, graph, memories, memory_index, dream_cycle_count);
     }
 
     // Stats
@@ -477,6 +546,8 @@ int main() {
 
         if (cmd == "init") {
             std::string db_path = req.value("db_path", std::string(""));
+            std::string data_dir_val = req.value("data_dir", std::string(""));
+            brain_instance.data_dir = data_dir_val;
             if (db_path.empty()) {
                 response = make_response(false, cmd, seq, nullptr, "db_path required");
             } else {
@@ -531,6 +602,95 @@ int main() {
             } else {
                 json result = brain_instance.get_stats();
                 response = make_response(true, cmd, seq, result);
+            }
+        } else if (cmd == "dream_cycle") {
+            if (!brain_instance.initialized) {
+                response = make_response(false, cmd, seq, nullptr, "brain not initialized");
+            } else {
+                auto result = brain_instance.run_dream_cycle();
+                json d = {
+                    {"replayed",        (int)result.replayed},
+                    {"merged",          (int)result.merged},
+                    {"pruned_patterns", (int)result.pruned_patterns},
+                    {"pruned_edges",    (int)result.pruned_edges},
+                    {"discovered",      (int)result.discovered},
+                    {"resolved",        (int)result.resolved},
+                    {"cycle_time_ms",   (int)result.cycle_time_ms}
+                };
+                response = make_response(true, cmd, seq, d);
+            }
+        } else if (cmd == "feedback_signal") {
+#ifdef BRAIN_EVOLUTION
+            brain::FeedbackSignal sig;
+            sig.useful = req.value("useful", false);
+            sig.timestamp = static_cast<double>(std::time(nullptr));
+
+            if (req.contains("memory_ids") && req["memory_ids"].is_array()) {
+                for (auto& v : req["memory_ids"]) {
+                    sig.memory_ids.push_back(v.get<int64_t>());
+                }
+            }
+            if (req.contains("edge_pairs") && req["edge_pairs"].is_array()) {
+                for (auto& pair : req["edge_pairs"]) {
+                    if (pair.is_array() && pair.size() >= 2) {
+                        sig.edge_pairs.push_back({pair[0].get<int64_t>(), pair[1].get<int64_t>()});
+                    }
+                }
+            }
+
+            brain_instance.evolution.record_feedback(std::move(sig));
+            response = make_response(true, cmd, seq, json{{"recorded", true}});
+#else
+            response = make_response(false, cmd, seq, nullptr, "evolution not enabled");
+#endif
+        } else if (cmd == "evolution_train") {
+#ifdef BRAIN_EVOLUTION
+            brain_instance.evolution.train_step();
+            if (brain_instance.db) {
+                brain_instance.evolution.save_state(brain_instance.db);
+            }
+            response = make_response(true, cmd, seq,
+                json{{"generation", brain_instance.evolution.generation}});
+#else
+            response = make_response(false, cmd, seq, nullptr, "evolution not enabled");
+#endif
+        } else if (cmd == "evolution_stats") {
+#ifdef BRAIN_EVOLUTION
+            auto s = brain_instance.evolution.stats();
+            response = make_response(true, cmd, seq, json{
+                {"generation", s.generation},
+                {"num_node_weights", s.num_node_weights},
+                {"num_edge_weights", s.num_edge_weights},
+                {"learning_rate", s.learning_rate}
+            });
+#else
+            response = make_response(false, cmd, seq, nullptr, "evolution not enabled");
+#endif
+        } else if (cmd == "generate_instincts") {
+            std::string output_path = req.value("output_path", std::string(""));
+            if (output_path.empty()) {
+                response = make_response(false, cmd, seq, nullptr, "output_path required");
+            } else {
+                auto corpus = brain::generate_instincts();
+                bool ok = brain::save_instincts(corpus, output_path);
+                if (ok) {
+                    size_t file_size = 0;
+                    {
+                        std::ifstream fs(output_path, std::ios::binary | std::ios::ate);
+                        if (fs) file_size = (size_t)fs.tellg();
+                    }
+                    json d = {
+                        {"memories", (int)corpus.memories.size()},
+                        {"edges", (int)corpus.edges.size()},
+                        {"output_path", output_path},
+                        {"file_size_bytes", (int)file_size}
+                    };
+                    response = make_response(true, cmd, seq, d);
+                    fprintf(stderr, "[brain] generated instincts: %zu memories, %zu edges, %zu bytes\n",
+                            corpus.memories.size(), corpus.edges.size(), file_size);
+                } else {
+                    response = make_response(false, cmd, seq, nullptr, "failed to write " + output_path);
+                }
             }
         } else if (cmd == "shutdown") {
             response = make_response(true, cmd, seq, json{{"msg", "bye"}});

@@ -46,6 +46,9 @@ public:
 
     bool has_node(int64_t id) const { return nodes_.count(id) > 0; }
 
+    // Remove a node and all its edges (both outgoing and incoming).
+    void remove_node(int64_t id);
+
     size_t node_count() const { return nodes_.size(); }
 
     size_t edge_count() const {

@@ -101,8 +101,29 @@ pub enum Command {
     GetStats {
         seq: Option<u64>,
     },
+    DreamCycle {
+        seq: Option<u64>,
+    },
+    // Evolution commands -- only meaningful when compiled with --features evolution
+    // When evolution is disabled, these return { ok: false, error: "evolution not enabled" }
+    FeedbackSignal {
+        seq: Option<u64>,
+        memory_ids: Vec<i64>,
+        edge_pairs: Vec<[i64; 2]>,
+        useful: bool,
+    },
+    EvolutionTrain {
+        seq: Option<u64>,
+    },
+    EvolutionStats {
+        seq: Option<u64>,
+    },
     Shutdown {
         seq: Option<u64>,
+    },
+    GenerateInstincts {
+        seq: Option<u64>,
+        output_path: String,
     },
 }
 
@@ -114,7 +135,12 @@ impl Command {
             Command::Absorb { seq, .. } => *seq,
             Command::DecayTick { seq, .. } => *seq,
             Command::GetStats { seq, .. } => *seq,
+            Command::DreamCycle { seq, .. } => *seq,
+            Command::FeedbackSignal { seq, .. } => *seq,
+            Command::EvolutionTrain { seq, .. } => *seq,
+            Command::EvolutionStats { seq, .. } => *seq,
             Command::Shutdown { seq, .. } => *seq,
+            Command::GenerateInstincts { seq, .. } => *seq,
         }
     }
 
@@ -125,7 +151,12 @@ impl Command {
             Command::Absorb { .. } => "absorb",
             Command::DecayTick { .. } => "decay_tick",
             Command::GetStats { .. } => "get_stats",
+            Command::DreamCycle { .. } => "dream_cycle",
+            Command::FeedbackSignal { .. } => "feedback_signal",
+            Command::EvolutionTrain { .. } => "evolution_train",
+            Command::EvolutionStats { .. } => "evolution_stats",
             Command::Shutdown { .. } => "shutdown",
+            Command::GenerateInstincts { .. } => "generate_instincts",
         }
     }
 }
@@ -203,4 +234,14 @@ pub struct StatsResult {
     pub health_distribution: std::collections::HashMap<String, usize>,
     pub top_activated: Vec<serde_json::Value>,
     pub bottom_activated: Vec<serde_json::Value>,
+}
+
+// ---- Evolution stats result (serialized in JSON responses) ----
+
+#[derive(Debug, Serialize)]
+pub struct EvolutionStatsResult {
+    pub generation: u32,
+    pub num_node_weights: usize,
+    pub num_edge_weights: usize,
+    pub learning_rate: f32,
 }

@@ -49,18 +49,35 @@ set(BRAIN_SOURCES
   src/decay.cpp
   src/absorb.cpp
   src/persistence.cpp
+  src/dreaming.cpp
+  src/instincts.cpp
 )
+
+# --- Evolution feature gate ---
+option(BRAIN_EVOLUTION "Enable evolution learning" OFF)
+if(BRAIN_EVOLUTION)
+  add_compile_definitions(BRAIN_EVOLUTION)
+  list(APPEND BRAIN_SOURCES src/evolution.cpp)
+  # Evolution standalone test binary
+  add_executable(evolution-tests src/evolution.cpp)
+  target_compile_definitions(evolution-tests PRIVATE BRAIN_EVOLUTION BRAIN_EVOLUTION_TESTS)
+  target_link_libraries(evolution-tests PRIVATE nlohmann_json sqlite3_bundled)
+  target_include_directories(evolution-tests PRIVATE ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/vendor/sqlite3)
+endif()
 
 # --- Main binary ---
 add_executable(eidolon src/main.cpp ${BRAIN_SOURCES})
-target_link_libraries(eidolon PRIVATE Eigen3::Eigen nlohmann_json sqlite3_bundled Threads::Threads)
+find_package(ZLIB REQUIRED)
+target_link_libraries(eidolon PRIVATE Eigen3::Eigen nlohmann_json sqlite3_bundled Threads::Threads ZLIB::ZLIB)
 
 # --- Test binary ---
 add_executable(brain-tests
   tests/test_substrate.cpp
   tests/test_graph.cpp
   tests/test_decay.cpp
+  tests/test_dreaming.cpp
+  tests/test_instincts.cpp
   tests/test_e2e.cpp
   ${BRAIN_SOURCES}
 )
-target_link_libraries(brain-tests PRIVATE Eigen3::Eigen nlohmann_json sqlite3_bundled Threads::Threads)
+target_link_libraries(brain-tests PRIVATE Eigen3::Eigen nlohmann_json sqlite3_bundled Threads::Threads ZLIB::ZLIB)

@@ -6,3 +6,8 @@ pub mod interference;
 pub mod decay;
 pub mod absorb;
 pub mod persistence;
+pub mod dreaming;
+
+#[cfg(feature = "evolution")]
+pub mod evolution;
+pub mod instincts;

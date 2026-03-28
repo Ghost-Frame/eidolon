@@ -155,4 +155,20 @@ ConnectionGraph::neighbors(int64_t id) const {
     return &it->second;
 }
 
+void ConnectionGraph::remove_node(int64_t id) {
+    // Remove outgoing edges
+    adjacency_.erase(id);
+    // Remove incoming edges from all other nodes
+    for (auto& [nid, edges] : adjacency_) {
+        edges.erase(
+            std::remove_if(edges.begin(), edges.end(),
+                [id](const std::tuple<int64_t, float, EdgeType>& e) {
+                    return std::get<0>(e) == id;
+                }),
+            edges.end()
+        );
+    }
+    nodes_.erase(id);
+}
+
 } // namespace brain

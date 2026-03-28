@@ -21,6 +21,8 @@
 void run_substrate_tests(int& passes, int& fails);
 void run_graph_tests(int& passes, int& fails);
 void run_decay_tests(int& passes, int& fails);
+void run_dreaming_tests(int& passes, int& fails);
+void run_instincts_tests(int& passes, int& fails);
 
 namespace {
 
@@ -221,6 +223,10 @@ int main() {
     fprintf(stdout, "\n");
 
     run_decay_tests(total_pass, total_fail);
+    fprintf(stdout, "\n");
+
+    run_dreaming_tests(total_pass, total_fail);
+    run_instincts_tests(total_pass, total_fail);
     fprintf(stdout, "\n");
 
     // E2E tests

@@ -7,6 +7,8 @@ use rusqlite::Connection;
 use serde_json::json;
 
 use eidolon::absorb::absorb_memory;
+use eidolon::instincts::{apply_instincts, check_ghost_replacement, generate_instincts, load_instincts, save_instincts};
+use eidolon::dreaming::{dream_cycle, DreamCycleResult};
 use eidolon::decay::{
     apply_recall_boost, classify_health, compute_pattern_decay, is_dead, EDGE_DECAY_RATE,
 };
@@ -20,6 +22,12 @@ use eidolon::types::{
     StatsResult, BRAIN_DIM, RAW_DIM,
 };
 
+#[cfg(feature = "evolution")]
+use eidolon::types::EvolutionStatsResult;
+
+#[cfg(feature = "evolution")]
+use eidolon::evolution::{EvolutionState, FeedbackSignal};
+
 struct Brain {
     memories: Vec<BrainMemory>,
     memory_index: HashMap<i64, usize>,
@@ -27,6 +35,10 @@ struct Brain {
     substrate: HopfieldSubstrate,
     graph: ConnectionGraph,
     conn: Option<Connection>,
+    dream_cycle_count: u64,
+    data_dir: Option<String>,
+    #[cfg(feature = "evolution")]
+    evolution: EvolutionState,
 }
 
 impl Brain {
@@ -38,12 +50,18 @@ impl Brain {
             substrate: HopfieldSubstrate::new(),
             graph: ConnectionGraph::new(),
             conn: None,
+            dream_cycle_count: 0,
+            data_dir: None,
+            #[cfg(feature = "evolution")]
+            evolution: EvolutionState::new(),
         }
     }
 
-    fn init(&mut self, db_path: &str) -> Result<String, String> {
+    fn init(&mut self, db_path: &str, data_dir: Option<&str>) -> Result<String, String> {
         let conn = Connection::open(db_path)
             .map_err(|e| format!("failed to open {}: {}", db_path, e))?;
+
+        self.data_dir = data_dir.map(|s| s.to_string());
 
         // Load memories
         let mut memories = load_memories(&conn)
@@ -51,7 +69,41 @@ impl Brain {
 
         if memories.is_empty() {
             self.conn = Some(conn);
-            return Err("brain.db has no memories".to_string());
+            // If instincts.bin exists, apply it as ghost pre-training
+            if let Some(ref dir) = self.data_dir.clone() {
+                let inst_path = format!("{}/instincts.bin", dir);
+                if let Some(corpus) = load_instincts(&inst_path) {
+                    // Build a PCA from the corpus embeddings to bootstrap
+                    let valid: Vec<&Vec<f32>> = corpus.memories.iter()
+                        .filter(|m| m.embedding.len() == RAW_DIM)
+                        .map(|m| &m.embedding)
+                        .collect();
+                    if !valid.is_empty() {
+                        let n = valid.len().min(50);
+                        let mut data = ndarray::Array2::<f32>::zeros((n, RAW_DIM));
+                        for (i, emb) in valid.iter().take(n).enumerate() {
+                            for (j, &v) in emb.iter().enumerate() {
+                                data[[i, j]] = v;
+                            }
+                        }
+                        self.pca = PcaTransform::fit(&data);
+                    }
+                    apply_instincts(
+                        &mut self.memories,
+                        &mut self.memory_index,
+                        &mut self.substrate,
+                        &mut self.graph,
+                        &self.pca,
+                        &corpus,
+                    );
+                    let n_ghosts = self.memories.len();
+                    eprintln!("[brain] applied instincts: {} ghost patterns", n_ghosts);
+                    return Ok(format!("initialized with {} ghost patterns from instincts", n_ghosts));
+                } else {
+                    eprintln!("[brain] no instincts.bin at {}, starting empty", inst_path);
+                }
+            }
+            return Ok("initialized: empty brain".to_string());
         }
 
         // Try loading saved PCA state
@@ -121,6 +173,12 @@ impl Brain {
             graph.add_edge(edge.source_id, edge.target_id, edge.weight, edge.edge_type.clone());
         }
 
+        // Load evolution state if feature is enabled
+        #[cfg(feature = "evolution")]
+        {
+            self.evolution = EvolutionState::load_state(&conn);
+        }
+
         let n_patterns = memories.len();
         let n_edges = graph.total_edges();
 
@@ -178,6 +236,15 @@ impl Brain {
                 *entry = (*activation, "spread", *hops);
             } else if entry.1 == "hopfield" && *hops > 0 {
                 *entry = (entry.0, "both", entry.2);
+            }
+        }
+
+        // Evolution post-processing: apply learned node weights
+        #[cfg(feature = "evolution")]
+        {
+            for (id, entry) in &mut merged {
+                let nw = self.evolution.get_node_weight(*id);
+                entry.0 *= nw;
             }
         }
 
@@ -301,6 +368,19 @@ impl Brain {
             &mut self.graph,
         );
 
+        // Check if any ghost patterns are superseded by this real memory
+        let new_pattern = memory.pattern.clone();
+        let removed = check_ghost_replacement(
+            &new_pattern,
+            &mut self.memories,
+            &mut self.memory_index,
+            &mut self.substrate,
+            &mut self.graph,
+        );
+        if removed > 0 {
+            eprintln!("[brain] absorbed real memory id={}, replaced {} ghost(s)", memory.id, removed);
+        }
+
         let idx = self.memories.len();
         self.memory_index.insert(memory.id, idx);
 
@@ -358,6 +438,17 @@ impl Brain {
         }
     }
 
+    fn run_dream_cycle(&mut self) -> DreamCycleResult {
+        self.dream_cycle_count += 1;
+        dream_cycle(
+            &mut self.substrate,
+            &mut self.graph,
+            &mut self.memories,
+            &mut self.memory_index,
+            self.dream_cycle_count,
+        )
+    }
+
     fn get_stats(&self) -> StatsResult {
         let total_patterns = self.memories.len();
         let total_edges = self.graph.total_edges();
@@ -412,6 +503,40 @@ impl Brain {
             bottom_activated,
         }
     }
+
+    // Evolution: record a feedback signal (no-op when feature disabled)
+    #[cfg(feature = "evolution")]
+    fn evolution_feedback(&mut self, memory_ids: Vec<i64>, edge_pairs: Vec<[i64; 2]>, useful: bool) {
+        let pairs: Vec<(i64, i64)> = edge_pairs.into_iter().map(|p| (p[0], p[1])).collect();
+        let signal = FeedbackSignal {
+            memory_ids,
+            edge_pairs: pairs,
+            useful,
+            timestamp: now_unix(),
+        };
+        self.evolution.record_feedback(signal);
+    }
+
+    // Evolution: run one training step and persist (no-op when feature disabled)
+    #[cfg(feature = "evolution")]
+    fn evolution_train(&mut self) -> u32 {
+        self.evolution.train_step();
+        if let Some(ref conn) = self.conn {
+            let _ = self.evolution.save_state(conn);
+        }
+        self.evolution.generation
+    }
+
+    // Evolution: return current stats
+    #[cfg(feature = "evolution")]
+    fn evolution_stats(&self) -> EvolutionStatsResult {
+        EvolutionStatsResult {
+            generation: self.evolution.generation,
+            num_node_weights: self.evolution.node_weights.len(),
+            num_edge_weights: self.evolution.edge_weights.len(),
+            learning_rate: self.evolution.learning_rate,
+        }
+    }
 }
 
 fn write_response(resp: &Response) {
@@ -449,8 +574,8 @@ fn main() {
         let _cmd_name = cmd.cmd_name().to_string();
 
         match cmd {
-            Command::Init { db_path, .. } => {
-                match brain.init(&db_path) {
+            Command::Init { db_path, data_dir, .. } => {
+                match brain.init(&db_path, data_dir.as_deref()) {
                     Ok(msg) => {
                         eprintln!("[brain] {}", msg);
                         let resp = Response::ok("init", seq, json!({ "message": msg }));
@@ -513,6 +638,81 @@ fn main() {
                 let stats = brain.get_stats();
                 let resp = Response::ok("get_stats", seq, serde_json::to_value(stats).unwrap_or(json!({})));
                 write_response(&resp);
+            }
+
+            Command::DreamCycle { .. } => {
+                let result = brain.run_dream_cycle();
+                let resp = Response::ok("dream_cycle", seq, serde_json::to_value(result).unwrap_or(json!({})));
+                write_response(&resp);
+            }
+
+            Command::FeedbackSignal { memory_ids, edge_pairs, useful, .. } => {
+                #[cfg(feature = "evolution")]
+                {
+                    brain.evolution_feedback(memory_ids, edge_pairs, useful);
+                    let resp = Response::ok("feedback_signal", seq, json!({ "recorded": true }));
+                    write_response(&resp);
+                }
+                #[cfg(not(feature = "evolution"))]
+                {
+                    let _ = (memory_ids, edge_pairs, useful);
+                    let resp = Response::err("feedback_signal", seq, "evolution not enabled".to_string());
+                    write_response(&resp);
+                }
+            }
+
+            Command::EvolutionTrain { .. } => {
+                #[cfg(feature = "evolution")]
+                {
+                    let generation = brain.evolution_train();
+                    let resp = Response::ok("evolution_train", seq, json!({ "generation": generation }));
+                    write_response(&resp);
+                }
+                #[cfg(not(feature = "evolution"))]
+                {
+                    let resp = Response::err("evolution_train", seq, "evolution not enabled".to_string());
+                    write_response(&resp);
+                }
+            }
+
+            Command::EvolutionStats { .. } => {
+                #[cfg(feature = "evolution")]
+                {
+                    let stats = brain.evolution_stats();
+                    let resp = Response::ok("evolution_stats", seq, serde_json::to_value(stats).unwrap_or(json!({})));
+                    write_response(&resp);
+                }
+                #[cfg(not(feature = "evolution"))]
+                {
+                    let resp = Response::err("evolution_stats", seq, "evolution not enabled".to_string());
+                    write_response(&resp);
+                }
+            }
+
+            Command::GenerateInstincts { output_path, .. } => {
+                let corpus = generate_instincts();
+                let n_memories = corpus.memories.len();
+                let n_edges = corpus.edges.len();
+                match save_instincts(&corpus, &output_path) {
+                    Ok(()) => {
+                        let file_size = std::fs::metadata(&output_path)
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        let resp = Response::ok("generate_instincts", seq, json!({
+                            "memories": n_memories,
+                            "edges": n_edges,
+                            "output_path": output_path,
+                            "file_size_bytes": file_size,
+                        }));
+                        write_response(&resp);
+                        eprintln!("[brain] generated instincts: {} memories, {} edges, {} bytes",
+                            n_memories, n_edges, file_size);
+                    }
+                    Err(e) => {
+                        let resp = Response::err("generate_instincts", seq, e);
+                        write_response(&resp);
+                    }
+                }
             }
 
             Command::Shutdown { .. } => {
