@@ -1,0 +1,20 @@
+[server]
+host = "127.0.0.1"
+port = 7700
+
+[brain]
+db_path = "/opt/eidolon/engram/data/brain.db"
+data_dir = "/opt/eidolon/eidolon/data"
+
+[engram]
+url = "http://localhost:4200"
+
+# API key can also be set via EIDOLON_API_KEY env var
+# [auth]
+# api_key = "your-key-here"
+
+[agents.claude-code]
+command = "claude"
+args = ["-p", "--output-format", "stream-json"]
+models = ["opus", "sonnet", "haiku"]
+default_model = "sonnet"

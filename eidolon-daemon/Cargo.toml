@@ -1,0 +1,28 @@
+[package]
+name = "eidolon-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "eidolon-daemon"
+path = "src/main.rs"
+
+[dependencies]
+eidolon-lib = { path = "../eidolon-lib" }
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+tokio-stream = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

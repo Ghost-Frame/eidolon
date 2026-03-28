@@ -1,0 +1,101 @@
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::sync::Arc;
+
+use crate::AppState;
+use crate::agents::registry::run_agent;
+
+#[derive(Debug, Deserialize)]
+pub struct SubmitTaskRequest {
+    pub task: String,
+    pub agent: Option<String>,
+    pub model: Option<String>,
+}
+
+pub async fn submit_task(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SubmitTaskRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Validate task length
+    if req.task.len() > 10_000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "task description exceeds 10000 characters"})),
+        ));
+    }
+    if req.task.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "task must not be empty"})),
+        ));
+    }
+
+    let agent_name = req.agent
+        .clone()
+        .unwrap_or_else(|| "claude-code".to_string());
+
+    // Validate agent exists
+    if !state.config.agents.contains_key(&agent_name) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("unknown agent: {}", agent_name)})),
+        ));
+    }
+
+    let model = req.model.clone().unwrap_or_else(|| {
+        state.config.agents.get(&agent_name)
+            .map(|a| a.default_model.clone())
+            .unwrap_or_else(|| "sonnet".to_string())
+    });
+
+    let session_id = {
+        let mut sessions = state.sessions.lock().await;
+        sessions.create_session(req.task.clone(), agent_name.clone(), model.clone())
+    };
+
+    // Spawn agent in background
+    let state_clone = Arc::clone(&state);
+    let sid = session_id.clone();
+    tokio::spawn(async move {
+        run_agent(state_clone, sid, agent_name, req.task, model).await;
+    });
+
+    Ok(Json(json!({
+        "ok": true,
+        "session_id": session_id,
+        "status": "pending",
+    })))
+}
+
+pub async fn task_status(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let sessions = state.sessions.lock().await;
+    match sessions.get_session(&id) {
+        Some(s) => Ok(Json(s.to_json())),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("session {} not found", id)})),
+        )),
+    }
+}
+
+pub async fn kill_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let mut sessions = state.sessions.lock().await;
+    match sessions.kill_session(&id) {
+        Ok(()) => Ok(Json(json!({"ok": true, "session_id": id, "status": "killed"}))),
+        Err(e) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": e})),
+        )),
+    }
+}
