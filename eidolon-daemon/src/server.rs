@@ -27,8 +27,8 @@ async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    // Skip auth for health endpoint
-    if req.uri().path() == "/health" {
+    // Skip auth for health and gate/check (localhost-only, called by hooks)
+    if req.uri().path() == "/health" || req.uri().path() == "/gate/check" {
         return Ok(next.run(req).await);
     }
 

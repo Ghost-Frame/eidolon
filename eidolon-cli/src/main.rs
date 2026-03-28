@@ -2,6 +2,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::Message;
 
 fn daemon_url() -> String {
@@ -229,15 +230,24 @@ async fn cmd_task(task: &str, agent: Option<&str>, model: Option<&str>) -> Resul
     // Connect WebSocket for streaming
     let ws_url_str = ws_url(&daemon_url(), &format!("/task/{}/stream", session_id));
 
-    let mut ws_req = tokio_tungstenite::tungstenite::http::Request::builder()
-        .uri(&ws_url_str);
+    let host = daemon_url()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .to_string();
+
+    let mut ws_req_builder = tokio_tungstenite::tungstenite::http::Request::builder()
+        .uri(&ws_url_str)
+        .header("Host", host)
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", generate_key());
 
     if let Some((_name, val)) = auth_header() {
-        ws_req = ws_req.header("Authorization", val);
+        ws_req_builder = ws_req_builder.header("Authorization", val);
     }
 
-    let ws_req = ws_req
-        .header("Host", "127.0.0.1")
+    let ws_req = ws_req_builder
         .body(())
         .map_err(|e| format!("ws request build failed: {}", e))?;
 

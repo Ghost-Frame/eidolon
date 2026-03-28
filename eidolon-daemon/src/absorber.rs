@@ -4,6 +4,15 @@ use serde_json::json;
 use crate::AppState;
 use crate::session::SessionStatus;
 
+fn store_request(state: &Arc<AppState>, url: &str, body: serde_json::Value) -> reqwest::RequestBuilder {
+    let req = state.http_client.post(url).json(&body);
+    if let Some(ref key) = state.config.engram.api_key {
+        req.header("Authorization", format!("Bearer {}", key))
+    } else {
+        req
+    }
+}
+
 pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
     let (task, output_buffer, status, corrections, agent, short_id) = {
         let sessions = state.sessions.lock().await;
@@ -47,9 +56,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
 
     // Store session summary to Engram
     let store_url = format!("{}/store", state.config.engram.url);
-    let store_result = state.http_client
-        .post(&store_url)
-        .json(&json!({
+    let store_result = store_request(&state, &store_url, json!({
             "content": summary,
             "category": "task",
             "source": "eidolon-daemon",
@@ -81,9 +88,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
 
     for line in blocked_lines.iter().take(5) {
         let block_content = format!("Gate blocked action in session {}: {}", short_id, line);
-        let _ = state.http_client
-            .post(&store_url)
-            .json(&json!({
+        let _ = store_request(&state, &store_url, json!({
                 "content": block_content,
                 "category": "issue",
                 "source": "eidolon-daemon",
@@ -112,9 +117,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
             task.chars().take(80).collect::<String>(),
             discoveries,
         );
-        let _ = state.http_client
-            .post(&store_url)
-            .json(&json!({
+        let _ = store_request(&state, &store_url, json!({
                 "content": discovery_content,
                 "category": "discovery",
                 "source": "eidolon-daemon",

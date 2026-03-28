@@ -7,6 +7,54 @@ use std::sync::Arc;
 
 use crate::AppState;
 
+// Known server mapping: IP/hostname -> (canonical name, notes)
+struct ServerInfo {
+    canonical: &'static str,
+    notes: &'static str,
+}
+
+fn server_info(host: &str) -> Option<ServerInfo> {
+    match host {
+        "10.0.0.1" | "reverse-proxy" => Some(ServerInfo {
+            canonical: "reverse-proxy (Hetzner reverse proxy)",
+            notes: "This is the Reverse-proxy reverse proxy -- NOT where Engram runs. Engram production is on production (10.0.0.2).",
+        }),
+        "10.0.0.2" | "production" => Some(ServerInfo {
+            canonical: "production (Engram production)",
+            notes: "Engram production server. SSH as deploy.",
+        }),
+        "127.0.0.1" | "10.0.0.3" | "rocky" => Some(ServerInfo {
+            canonical: "rocky (staging/backup)",
+            notes: "Local staging server. SSH as deploy.",
+        }),
+        "10.0.0.4" | "10.0.0.4" | "app-server-1" => Some(ServerInfo {
+            canonical: "app-server-1",
+            notes: "BAV services. SSH as deploy.",
+        }),
+        "10.0.0.5" | "10.0.0.5" | "edge-server-1" => Some(ServerInfo {
+            canonical: "edge-server-1",
+            notes: "BAV edge. SSH as deploy.",
+        }),
+        "10.0.0.6" | "10.0.0.6" | "coolify-host" => Some(ServerInfo {
+            canonical: "coolify-host",
+            notes: "Coolify server. SSH as root.",
+        }),
+        "10.0.0.7" | "10.0.0.7" | "app-server-2" => Some(ServerInfo {
+            canonical: "app-server-2",
+            notes: "Mindset apps. SSH as deploy.",
+        }),
+        "10.0.0.8" | "10.0.0.8" | "build-server" => Some(ServerInfo {
+            canonical: "build-server",
+            notes: "Forge. SSH as ghostframe.",
+        }),
+        "10.0.0.9" | "10.0.0.9" | "container-host" => Some(ServerInfo {
+            canonical: "container-host",
+            notes: "OVH VPS. Port 4822. DO NOT REBOOT -- LUKS vault will lock.",
+        }),
+        _ => None,
+    }
+}
+
 pub async fn gate_check(
     State(state): State<Arc<AppState>>,
     Json(input): Json<Value>,
@@ -47,11 +95,12 @@ pub async fn gate_check(
         }));
     }
 
-    // SSH command enrichment
+    // SSH command checks (block wrong servers, enrich correct ones)
     if command.contains("ssh ") || command.starts_with("ssh") {
-        if let Some(enrichment) = check_ssh_command(command, &state).await {
-            tracing::info!("gate: enrich (ssh context) tool={} session={}", tool_name, session_id);
-            return Json(enrichment);
+        if let Some(result) = check_ssh_command(command, &state).await {
+            let action = result.get("action").and_then(|v| v.as_str()).unwrap_or("allow");
+            tracing::info!("gate: {} (ssh check) tool={} session={}", action, tool_name, session_id);
+            return Json(result);
         }
     }
 
@@ -68,62 +117,77 @@ pub async fn gate_check(
     Json(json!({"action": "allow"}))
 }
 
-fn check_dangerous_patterns(command: &str) -> Option<&'static str> {
+fn check_dangerous_patterns(command: &str) -> Option<String> {
     let cmd_lower = command.to_lowercase();
 
     // Destructive rm patterns
     if cmd_lower.contains("rm -rf /") && !cmd_lower.contains("rm -rf /tmp") {
-        return Some("Destructive rm -rf on critical path -- not allowed");
+        return Some("Destructive rm -rf on critical path -- not allowed".to_string());
     }
     if cmd_lower.contains("rm -rf ~/") {
-        return Some("Destructive rm -rf on home directory -- not allowed");
+        return Some("Destructive rm -rf on home directory -- not allowed".to_string());
     }
     if cmd_lower.contains("rm -rf /home") {
-        return Some("Destructive rm -rf on /home -- not allowed");
+        return Some("Destructive rm -rf on /home -- not allowed".to_string());
     }
 
     // Force push to protected branches
     if cmd_lower.contains("git push") && cmd_lower.contains("--force") {
         if cmd_lower.contains("main") || cmd_lower.contains("master") {
-            return Some("Force push to main/master branch blocked");
+            return Some("Force push to main/master branch blocked".to_string());
         }
     }
 
     // Hard reset
     if cmd_lower.contains("git reset --hard") {
-        return Some("git reset --hard is destructive -- use git stash instead");
+        return Some("git reset --hard is destructive -- use git stash instead".to_string());
     }
 
     // OVH reboot/shutdown (DO NOT REBOOT OVH -- LUKS vault will lock)
     if cmd_lower.contains("reboot") || cmd_lower.contains("shutdown") {
         if cmd_lower.contains("10.0.0.9") || cmd_lower.contains("4822") {
-            return Some("Reboot/shutdown of OVH VPS blocked -- LUKS vault will lock");
+            return Some("Reboot/shutdown of OVH VPS blocked -- LUKS vault will lock".to_string());
         }
-        // Also block generic reboot on any ssh connection mentioning ovh
         if cmd_lower.contains("ovh") {
-            return Some("Reboot/shutdown of OVH VPS blocked -- LUKS vault will lock");
+            return Some("Reboot/shutdown of OVH VPS blocked -- LUKS vault will lock".to_string());
         }
+    }
+
+    // Seed + demo or seed + production -- prevent seeding real data
+    if cmd_lower.contains("seed") {
+        if cmd_lower.contains("demo") {
+            return Some("Seeding demo data blocked -- do not seed demo data into any instance without explicit authorization".to_string());
+        }
+        if cmd_lower.contains("production") || cmd_lower.contains("prod") {
+            return Some("Seeding production data blocked -- do not seed real data into production without explicit authorization".to_string());
+        }
+    }
+
+    // Stop/restart Engram production without confirmation
+    if (cmd_lower.contains("systemctl stop") || cmd_lower.contains("systemctl restart")
+        || cmd_lower.contains("podman stop") || cmd_lower.contains("docker stop"))
+        && cmd_lower.contains("engram")
+        && (cmd_lower.contains("10.0.0.2") || cmd_lower.contains("production")) {
+        return Some("Stopping/restarting Engram on production (production) requires explicit confirmation from the operator".to_string());
     }
 
     // Drop table / format destructors
     if cmd_lower.contains("drop table") {
-        return Some("DROP TABLE statement requires manual confirmation");
+        return Some("DROP TABLE statement requires manual confirmation".to_string());
     }
-    if cmd_lower.contains("mkfs.") || cmd_lower.contains("format ") {
-        return Some("Disk format command blocked -- requires manual confirmation");
+    if cmd_lower.contains("mkfs.") {
+        return Some("Disk format command blocked -- requires manual confirmation".to_string());
     }
 
     None
 }
 
 async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
-    // Parse SSH target from command
-    // Look for patterns: ssh user@host, ssh -p port user@host, ssh ip
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let ssh_pos = tokens.iter().position(|&t| t == "ssh")?;
 
-    let mut host = None;
-    let mut port = None;
+    let mut host_raw: Option<&str> = None;
+    let mut port: Option<u16> = None;
     let mut i = ssh_pos + 1;
 
     while i < tokens.len() {
@@ -134,32 +198,63 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
                 port = tokens[i].parse::<u16>().ok();
             }
         } else if t.starts_with('-') {
-            // Skip other flags (and their args for flags that take args)
-            if t == "-i" || t == "-l" || t == "-o" || t == "-L" || t == "-R" || t == "-D" {
-                i += 1; // skip the flag's argument
+            // Skip flags that take an argument
+            if matches!(t, "-i" | "-l" | "-o" | "-L" | "-R" | "-D" | "-J" | "-W") {
+                i += 1;
             }
         } else if !t.contains('=') {
-            // This is likely the user@host or host token
-            host = Some(t);
+            host_raw = Some(t);
             break;
         }
         i += 1;
     }
 
-    let host = host?;
+    let host_raw = host_raw?;
+    // Strip user@ prefix if present
+    let host = if let Some(pos) = host_raw.rfind('@') {
+        &host_raw[pos + 1..]
+    } else {
+        host_raw
+    };
 
-    // Check OVH specifically
-    if let Some(p) = port {
-        if p == 4822 {
+    // OVH: check port
+    if port == Some(4822) || host == "10.0.0.9" {
+        if port.is_some() && port != Some(4822) {
             return Some(json!({
-                "action": "enrich",
-                "message": "OVH VPS connection. DO NOT REBOOT -- LUKS vault will lock. Use port 4822.",
-                "context": "OVH VPS: deploy@10.0.0.9 -p 4822. Rootless Podman containers. Do not reboot.",
+                "action": "block",
+                "message": "OVH VPS requires port 4822. Use: ssh -i ~/.ssh/id_ed25519 -p 4822 deploy@10.0.0.9. DO NOT REBOOT -- LUKS vault will lock.",
             }));
         }
+        return Some(json!({
+            "action": "enrich",
+            "message": "OVH VPS connection: port 4822, user deploy. DO NOT REBOOT -- LUKS vault will lock. Rootless Podman containers inside. Use SCP + podman cp, not heredoc.",
+        }));
     }
 
-    // Query brain for host knowledge
+    // Reverse-proxy (10.0.0.1) -- check if this is an Engram-related command
+    if host == "10.0.0.1" || host == "reverse-proxy" {
+        let cmd_lower = command.to_lowercase();
+        if cmd_lower.contains("engram") || cmd_lower.contains("4200") || cmd_lower.contains("brain") {
+            return Some(json!({
+                "action": "block",
+                "message": "WRONG SERVER: Engram production runs on production (10.0.0.2), NOT reverse-proxy (10.0.0.1). Reverse-proxy is the reverse proxy only. Use: ssh -i ~/.ssh/id_ed25519 deploy@10.0.0.2",
+            }));
+        }
+        return Some(json!({
+            "action": "enrich",
+            "message": "Note: reverse-proxy (10.0.0.1) is the reverse proxy. If you need Engram, use production (10.0.0.2) instead.",
+        }));
+    }
+
+    // Check against known server map
+    if let Some(info) = server_info(host) {
+        return Some(json!({
+            "action": "enrich",
+            "message": format!("Server: {} -- {}", info.canonical, info.notes),
+        }));
+    }
+
+    // Unknown host: query brain for context
     let embed_url = format!("{}/embed", state.config.engram.url);
     let query_text = format!("server {} ssh configuration", host);
 
@@ -196,12 +291,9 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
 }
 
 async fn check_systemctl_command(command: &str, state: &AppState) -> Option<Value> {
-    // Extract service name from systemctl command
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let systemctl_pos = tokens.iter().position(|&t| t == "systemctl")?;
 
-    // Format: systemctl [action] [service]
-    // action is at systemctl_pos+1, service at systemctl_pos+2 (or with flags)
     let action = tokens.get(systemctl_pos + 1).copied().unwrap_or("");
     let service = tokens.iter()
         .skip(systemctl_pos + 2)
@@ -209,7 +301,6 @@ async fn check_systemctl_command(command: &str, state: &AppState) -> Option<Valu
 
     let service = service.copied()?;
 
-    // Query brain for restart ordering info
     let embed_url = format!("{}/embed", state.config.engram.url);
     let query_text = format!("systemctl {} {} restart order dependencies", action, service);
 

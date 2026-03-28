@@ -35,12 +35,34 @@ impl Default for BrainConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngramConfig {
     pub url: String,
+    pub api_key: Option<String>,
 }
 
 impl Default for EngramConfig {
     fn default() -> Self {
         EngramConfig {
             url: "http://localhost:4200".to_string(),
+            api_key: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawEngramConfig {
+    #[serde(default = "default_engram_url")]
+    url: String,
+    api_key: Option<String>,
+}
+
+fn default_engram_url() -> String {
+    "http://localhost:4200".to_string()
+}
+
+impl Default for RawEngramConfig {
+    fn default() -> Self {
+        RawEngramConfig {
+            url: default_engram_url(),
+            api_key: None,
         }
     }
 }
@@ -105,7 +127,7 @@ struct RawConfig {
     #[serde(default)]
     brain: BrainConfig,
     #[serde(default)]
-    engram: EngramConfig,
+    engram: RawEngramConfig,
     #[serde(default)]
     agents: HashMap<String, AgentConfig>,
     #[serde(default)]
@@ -140,10 +162,16 @@ impl Config {
             return Err("EIDOLON_API_KEY is required (set env var or [auth] api_key in config)".to_string());
         }
 
+        // Engram API key: env var takes precedence over config file
+        let engram_api_key = std::env::var("ENGRAM_API_KEY").ok().or(raw.engram.api_key);
+
         Ok(Config {
             server: raw.server,
             brain: raw.brain,
-            engram: raw.engram,
+            engram: EngramConfig {
+                url: raw.engram.url,
+                api_key: engram_api_key,
+            },
             agents: raw.agents,
             api_key,
         })
@@ -164,6 +192,7 @@ impl Config {
             }
             let mut cfg = Config::default();
             cfg.api_key = api_key;
+            cfg.engram.api_key = std::env::var("ENGRAM_API_KEY").ok();
             cfg
         };
 
