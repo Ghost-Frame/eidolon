@@ -40,8 +40,8 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
     };
 
     let importance = match status {
-        SessionStatus::Completed => 6,
-        _ => 7,
+        SessionStatus::Completed => 7,
+        _ => 6,
     };
 
     // Build summary

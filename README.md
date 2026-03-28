@@ -167,7 +167,7 @@ The gate fails open. If the daemon is unreachable, commands proceed normally. Th
 
 - Rust 1.75+ (workspace build)
 - [Engram](https://codeberg.org/GhostFrame/engram) running and accessible
-- An Anthropic API key (for Oracle and living prompt features)
+- Oracle and living prompt features require a configured LLM provider in Engram (supports Gemini, Groq, DeepSeek, Ollama, and other OpenAI-compatible endpoints). Claude Code runs on your subscription, not an API key.
 
 ### Build
 

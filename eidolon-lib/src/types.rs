@@ -27,7 +27,11 @@ impl BrainMemory {
         if self.content.len() <= max_len {
             self.content.clone()
         } else {
-            format!("{}...", &self.content[..max_len])
+            let boundary = self.content.char_indices()
+                .nth(max_len)
+                .map(|(i, _)| i)
+                .unwrap_or(self.content.len());
+            format!("{}...", &self.content[..boundary])
         }
     }
 }

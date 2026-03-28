@@ -95,8 +95,15 @@ pub async fn gate_check(
         }));
     }
 
-    // SSH command checks (block wrong servers, enrich correct ones)
-    if command.contains("ssh ") || command.starts_with("ssh") {
+    // Check for command substitution ($() or backticks) -- scan those too
+    let has_substitution = command.contains("$(") || command.contains('`');
+
+    // SSH command checks (block wrong servers, enrich correct ones).
+    // Match on bare token basename to handle /usr/bin/ssh and similar paths.
+    let looks_like_ssh = command_contains_tool(command, "ssh")
+        || command_contains_tool(command, "scp")
+        || has_substitution && (command.contains("ssh") || command.contains("scp"));
+    if looks_like_ssh {
         if let Some(result) = check_ssh_command(command, &state).await {
             let action = result.get("action").and_then(|v| v.as_str()).unwrap_or("allow");
             tracing::info!("gate: {} (ssh check) tool={} session={}", action, tool_name, session_id);
@@ -104,8 +111,10 @@ pub async fn gate_check(
         }
     }
 
-    // systemctl enrichment
-    if command.contains("systemctl ") {
+    // systemctl enrichment -- match on basename too
+    let looks_like_systemctl = command_contains_tool(command, "systemctl")
+        || has_substitution && command.contains("systemctl");
+    if looks_like_systemctl {
         if let Some(enrichment) = check_systemctl_command(command, &state).await {
             tracing::info!("gate: enrich (systemctl context) tool={} session={}", tool_name, session_id);
             return Json(enrichment);
@@ -115,6 +124,15 @@ pub async fn gate_check(
     // Default: allow
     tracing::debug!("gate: allow tool={} session={}", tool_name, session_id);
     Json(json!({"action": "allow"}))
+}
+
+/// Returns true if any whitespace-delimited token in `command` has a basename
+/// matching `tool_name`. Handles paths like /usr/bin/ssh and ./ssh.
+fn command_contains_tool(command: &str, tool_name: &str) -> bool {
+    command.split_whitespace().any(|token| {
+        let basename = token.rsplit('/').next().unwrap_or(token);
+        basename == tool_name
+    })
 }
 
 fn check_dangerous_patterns(command: &str) -> Option<String> {
@@ -184,7 +202,11 @@ fn check_dangerous_patterns(command: &str) -> Option<String> {
 
 async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
-    let ssh_pos = tokens.iter().position(|&t| t == "ssh")?;
+    // Find ssh token by basename so /usr/bin/ssh is handled correctly
+    let ssh_pos = tokens.iter().position(|t| {
+        let basename = t.rsplit('/').next().unwrap_or(t);
+        basename == "ssh" || basename == "scp"
+    })?;
 
     let mut host_raw: Option<&str> = None;
     let mut port: Option<u16> = None;
@@ -292,7 +314,11 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
 
 async fn check_systemctl_command(command: &str, state: &AppState) -> Option<Value> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
-    let systemctl_pos = tokens.iter().position(|&t| t == "systemctl")?;
+    // Find systemctl token by basename so /usr/bin/systemctl is handled correctly
+    let systemctl_pos = tokens.iter().position(|t| {
+        let basename = t.rsplit('/').next().unwrap_or(t);
+        basename == "systemctl"
+    })?;
 
     let action = tokens.get(systemctl_pos + 1).copied().unwrap_or("");
     let service = tokens.iter()

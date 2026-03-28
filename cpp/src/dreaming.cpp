@@ -159,16 +159,9 @@ static size_t merge_redundant(
         memory_index[memories[i].id] = i;
     }
 
-    // Remove from graph (nodes and edges pointing to removed ids)
+    // Remove loser nodes from graph (removes node and all inbound/outbound edges)
     for (int64_t id : to_remove) {
-        // Remove all outgoing edges from this node -- graph handles this internally
-        // via add_node absence; we remove inbound edges by filtering adjacency
-        // ConnectionGraph does not expose a remove_node, so manually clean up via
-        // removing edges that reference the dead ids during the next operation.
-        // For now, the dead node stays as an orphan -- prune_dead will clean graph
-        // edges below threshold. This is acceptable given the 0.92 threshold means
-        // very few merges per cycle.
-        (void)id;
+        graph.remove_node(id);
     }
 
     return removed_count;
