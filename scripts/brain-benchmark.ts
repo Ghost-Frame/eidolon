@@ -1,5 +1,5 @@
 // brain-benchmark.ts
-// Benchmarks both Rust and C++ engram-brain backends against real brain.db
+// Benchmarks both Rust and C++ eidolon backends against real brain.db
 // Run: cd ~/engram && node --experimental-strip-types scripts/brain-benchmark.ts
 
 import { spawn, ChildProcess } from "node:child_process";
@@ -12,11 +12,11 @@ const DATA_DIR = "/opt/eidolon/engram/data";
 const BACKENDS = [
   {
     name: "Rust",
-    bin: "/opt/eidolon/engram/brain/rust/target/release/engram-brain",
+    bin: "/opt/eidolon/eidolon/rust/target/release/eidolon",
   },
   {
     name: "C++",
-    bin: "/opt/eidolon/engram/brain/cpp/build/engram-brain",
+    bin: "/opt/eidolon/eidolon/cpp/build/eidolon",
   },
 ];
 

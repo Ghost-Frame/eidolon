@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(engram_brain VERSION 1.0.0 LANGUAGES CXX C)
+project(eidolon VERSION 1.0.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -52,8 +52,8 @@ set(BRAIN_SOURCES
 )
 
 # --- Main binary ---
-add_executable(engram-brain src/main.cpp ${BRAIN_SOURCES})
-target_link_libraries(engram-brain PRIVATE Eigen3::Eigen nlohmann_json sqlite3_bundled Threads::Threads)
+add_executable(eidolon src/main.cpp ${BRAIN_SOURCES})
+target_link_libraries(eidolon PRIVATE Eigen3::Eigen nlohmann_json sqlite3_bundled Threads::Threads)
 
 # --- Test binary ---
 add_executable(brain-tests

@@ -1,4 +1,4 @@
-# Engram Neural
+# Eidolon
 
 The living brain for [Engram](https://codeberg.org/GhostFrame/engram) -- a from-scratch neural substrate that learns from memories instead of searching them.
 

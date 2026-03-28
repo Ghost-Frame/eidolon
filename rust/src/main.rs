@@ -6,16 +6,16 @@ use ndarray::Array1;
 use rusqlite::Connection;
 use serde_json::json;
 
-use engram_brain::absorb::absorb_memory;
-use engram_brain::decay::{
+use eidolon::absorb::absorb_memory;
+use eidolon::decay::{
     apply_recall_boost, classify_health, compute_pattern_decay, is_dead, EDGE_DECAY_RATE,
 };
-use engram_brain::graph::ConnectionGraph;
-use engram_brain::interference::{now_unix, parse_datetime_approx, resolve_interference};
-use engram_brain::pca::PcaTransform;
-use engram_brain::persistence::{load_edges, load_memories, save_edge, save_pca_state, load_pca_state};
-use engram_brain::substrate::{HopfieldSubstrate, DEFAULT_BETA};
-use engram_brain::types::{
+use eidolon::graph::ConnectionGraph;
+use eidolon::interference::{now_unix, parse_datetime_approx, resolve_interference};
+use eidolon::pca::PcaTransform;
+use eidolon::persistence::{load_edges, load_memories, save_edge, save_pca_state, load_pca_state};
+use eidolon::substrate::{HopfieldSubstrate, DEFAULT_BETA};
+use eidolon::types::{
     ActivatedMemory, BrainEdge, BrainMemory, Command, ContradictionPair, QueryResult, Response,
     StatsResult, BRAIN_DIM, RAW_DIM,
 };
@@ -424,7 +424,7 @@ fn main() {
     let stdin = io::stdin();
     let mut brain = Brain::new();
 
-    eprintln!("[brain] engram-brain started, waiting for commands");
+    eprintln!("[brain] eidolon started, waiting for commands");
 
     for line in stdin.lock().lines() {
         let line = match line {

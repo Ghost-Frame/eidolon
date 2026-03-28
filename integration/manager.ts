@@ -18,8 +18,8 @@ import type { BrainCommand, BrainResponse, BrainQueryResult, BrainStats } from "
 const BRAIN_BACKEND: string = process.env.ENGRAM_BRAIN_BACKEND || "rust";
 const EXE_SUFFIX = process.platform === "win32" ? ".exe" : "";
 
-const RUST_BINARY = resolve(process.cwd(), "brain", "rust", "target", "release", `engram-brain${EXE_SUFFIX}`);
-const CPP_BINARY = resolve(process.cwd(), "brain", "cpp", "build", `engram-brain${EXE_SUFFIX}`);
+const RUST_BINARY = resolve(process.cwd(), "eidolon", "rust", "target", "release", `eidolon${EXE_SUFFIX}`);
+const CPP_BINARY = resolve(process.cwd(), "eidolon", "cpp", "build", `eidolon${EXE_SUFFIX}`);
 
 const REQUEST_TIMEOUT_MS = 30000;
 const MAX_RESTART_ATTEMPTS = 3;

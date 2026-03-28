@@ -1,5 +1,5 @@
 // brain-openspace.test.ts
-// OpenSpace scenario test for engram-brain backends
+// OpenSpace scenario test for eidolon backends
 //
 // Creates a SYNTHETIC brain.db with a controlled GraphView/Engram consolidation
 // scenario, runs both Rust and C++ backends against it, and validates results.
@@ -19,11 +19,11 @@ import { execSync } from "node:child_process";
 const BACKENDS = [
   {
     name: "Rust",
-    bin: "/opt/eidolon/engram/brain/rust/target/release/engram-brain",
+    bin: "/opt/eidolon/eidolon/rust/target/release/eidolon",
   },
   {
     name: "C++",
-    bin: "/opt/eidolon/engram/brain/cpp/build/engram-brain",
+    bin: "/opt/eidolon/eidolon/cpp/build/eidolon",
   },
 ];
 

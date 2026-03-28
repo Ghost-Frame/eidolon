@@ -11,7 +11,7 @@ fn binary_path() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.push("target");
     p.push("release");
-    p.push("engram-brain");
+    p.push("eidolon");
     #[cfg(target_os = "windows")]
     p.set_extension("exe");
     p
