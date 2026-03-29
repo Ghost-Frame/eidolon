@@ -61,36 +61,34 @@ impl CreddClient {
     }
 
     /// Extract a specific field from a typed secret response.
-    /// credd v3 returns: {"type": "Login", "data": {"username": "...", "password": "..."}}
+    /// credd v3 returns: {"type": "ApiKey", "value": {"type": "api_key", "key": "..."}}
     pub fn extract_field(secret: &Value, field: &str) -> Result<String, String> {
-        let data = secret.get("data")
-            .ok_or_else(|| "secret has no 'data' field".to_string())?;
+        let val = secret.get("value")
+            .ok_or_else(|| "secret has no 'value' field".to_string())?;
 
-        // For Environment type, data is a map of key=value pairs
-        // For other types, data is a struct with named fields
-        data.get(field)
+        val.get(field)
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| format!("field '{}' not found in secret data", field))
+            .ok_or_else(|| format!("field '{}' not found in secret value", field))
     }
 
     /// Extract the bare value. Only valid for ApiKey and Note types.
-    /// ApiKey: {"type": "ApiKey", "data": {"key": "..."}}
-    /// Note: {"type": "Note", "data": {"content": "..."}}
+    /// ApiKey: {"type": "ApiKey", "value": {"type": "api_key", "key": "..."}}
+    /// Note: {"type": "Note", "value": {"type": "note", "content": "..."}}
     pub fn extract_bare(secret: &Value) -> Result<String, String> {
         let secret_type = secret.get("type")
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        let data = secret.get("data")
-            .ok_or_else(|| "secret has no 'data' field".to_string())?;
+        let val = secret.get("value")
+            .ok_or_else(|| "secret has no 'value' field".to_string())?;
 
         match secret_type {
-            "ApiKey" => data.get("key")
+            "ApiKey" => val.get("key")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .ok_or_else(|| "ApiKey missing 'key' field".to_string()),
-            "Note" => data.get("content")
+            "Note" => val.get("content")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .ok_or_else(|| "Note missing 'content' field".to_string()),
@@ -111,11 +109,13 @@ impl CreddClient {
             return Err(format!("env export block only valid for Environment type, got '{}'", secret_type));
         }
 
-        let data = secret.get("data")
+        let val = secret.get("value")
             .and_then(|v| v.as_object())
-            .ok_or_else(|| "Environment secret has no data object".to_string())?;
+            .ok_or_else(|| "Environment secret has no value object".to_string())?;
 
-        let exports: Vec<String> = data.iter()
+        // Filter out the serde tag field "type" from the export block
+        let exports: Vec<String> = val.iter()
+            .filter(|(k, _)| k.as_str() != "type")
             .filter_map(|(k, v)| {
                 v.as_str().map(|val| {
                     // Shell-escape the value

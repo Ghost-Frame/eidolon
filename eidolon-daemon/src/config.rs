@@ -77,7 +77,7 @@ pub struct CreddConfig {
 impl Default for CreddConfig {
     fn default() -> Self {
         CreddConfig {
-            url: "http://10.0.0.3:4400".to_string(),
+            url: "http://127.0.0.1:4400".to_string(),
             agent_key: None,
             tier3_trust_threshold: 80,
         }
@@ -94,7 +94,7 @@ struct RawCreddConfig {
 }
 
 fn default_credd_url() -> String {
-    "http://10.0.0.3:4400".to_string()
+    "http://127.0.0.1:4400".to_string()
 }
 
 fn default_tier3_threshold() -> u8 {
@@ -201,17 +201,13 @@ impl Config {
         let raw: RawConfig = toml::from_str(&content)
             .map_err(|e| format!("failed to parse config {}: {}", path, e))?;
 
-        // API key: env var takes precedence over config file
+        // API key: env var > config file > empty (will be filled by credd bootstrap)
         let api_key = std::env::var("EIDOLON_API_KEY")
             .ok()
             .or(raw.auth.api_key)
             .unwrap_or_default();
 
-        if api_key.is_empty() {
-            return Err("EIDOLON_API_KEY is required (set env var or [auth] api_key in config)".to_string());
-        }
-
-        // Engram API key: env var takes precedence over config file
+        // Engram API key: env var > config file > None (will be filled by credd bootstrap)
         let engram_api_key = std::env::var("ENGRAM_API_KEY").ok().or(raw.engram.api_key);
 
         // Credd: env vars take precedence over config file
@@ -265,4 +261,74 @@ impl Config {
 
         Ok(config)
     }
+
+    /// Fetch secrets from credd to populate api_key and engram.api_key.
+    /// Called after load. Requires credd.agent_key to be set.
+    pub async fn bootstrap_from_credd(&mut self, http: &reqwest::Client) -> Result<(), String> {
+        let agent_key = match &self.credd.agent_key {
+            Some(k) if !k.is_empty() => k.clone(),
+            _ => return Err("credd.agent_key required for bootstrap".to_string()),
+        };
+
+        let credd_url = &self.credd.url;
+
+        // Fetch Engram API key for Eidolon's dedicated instance
+        match credd_fetch(http, credd_url, &agent_key, "engram", "api-key-eidolon").await {
+            Ok(secret) => {
+                self.engram.api_key = Some(extract_api_key(&secret)?);
+                tracing::info!("bootstrapped engram api key from credd");
+            }
+            Err(e) => {
+                if self.engram.api_key.is_none() {
+                    return Err(format!("credd: engram api key: {}", e));
+                }
+                tracing::warn!("credd engram key fetch failed (using config fallback): {}", e);
+            }
+        }
+
+        // Fetch Eidolon's own API key (for authenticating incoming requests)
+        let instance_name = if self.server.port == 7700 { "hetzner" } else { "rocky" };
+        match credd_fetch(http, credd_url, &agent_key, "eidolon", instance_name).await {
+            Ok(secret) => {
+                self.api_key = extract_api_key(&secret)?;
+                tracing::info!("bootstrapped eidolon api key from credd (instance={})", instance_name);
+            }
+            Err(e) => {
+                if self.api_key.is_empty() {
+                    return Err(format!("credd: eidolon api key: {}", e));
+                }
+                tracing::warn!("credd eidolon key fetch failed (using config fallback): {}", e);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+async fn credd_fetch(
+    http: &reqwest::Client,
+    credd_url: &str,
+    agent_key: &str,
+    service: &str,
+    key: &str,
+) -> Result<serde_json::Value, String> {
+    let url = format!("{}/secret/{}/{}", credd_url, service, key);
+    let resp = http.get(&url)
+        .header("Authorization", format!("Bearer {}", agent_key))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("credd fetch {}/{}: {}", service, key, e))?;
+    if !resp.status().is_success() {
+        return Err(format!("credd {}/{}: HTTP {}", service, key, resp.status()));
+    }
+    resp.json().await.map_err(|e| format!("credd {}/{} parse: {}", service, key, e))
+}
+
+fn extract_api_key(secret: &serde_json::Value) -> Result<String, String> {
+    secret.get("value")
+        .and_then(|v| v.get("key"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "failed to extract key from credd response".to_string())
 }
