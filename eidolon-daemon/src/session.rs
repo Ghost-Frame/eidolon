@@ -39,6 +39,7 @@ pub struct Session {
     pub exit_code: Option<i32>,
     pub pid: Option<u32>,
     pub corrections: usize,
+    pub engram_stores: usize,
     pub error: Option<String>,
 }
 
@@ -58,6 +59,7 @@ impl Session {
             exit_code: None,
             pid: None,
             corrections: 0,
+            engram_stores: 0,
             error: None,
         }
     }
@@ -80,6 +82,7 @@ impl Session {
             "exit_code": self.exit_code,
             "pid": self.pid,
             "corrections": self.corrections,
+            "engram_stores": self.engram_stores,
             "error": self.error,
             "output_lines": self.output_buffer.len(),
         })
