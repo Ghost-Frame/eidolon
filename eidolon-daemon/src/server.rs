@@ -100,6 +100,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/brain/stats", get(brain::brain_stats))
         .route("/brain/query", post(brain::brain_query))
         .route("/gate/check", post(gate::gate_check))
+        .route("/gate/complete", post(gate::gate_complete))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware,

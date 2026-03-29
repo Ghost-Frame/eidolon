@@ -373,3 +373,56 @@ async fn check_systemctl_command(command: &str, state: &AppState) -> Option<Valu
 
     None
 }
+
+#[derive(serde::Deserialize)]
+pub struct CompleteRequest {
+    pub session_id: String,
+    pub summary: String,
+}
+
+pub async fn gate_complete(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<CompleteRequest>,
+) -> Json<Value> {
+    let summary = input.summary.trim().to_string();
+
+    if summary.is_empty() {
+        tracing::warn!("gate/complete: blocked -- blank summary session={}", input.session_id);
+        return Json(json!({
+            "allowed": false,
+            "reason": "Summary is required before completing a task -- store what you did"
+        }));
+    }
+
+    let sessions = state.sessions.lock().await;
+    match sessions.get_session(&input.session_id) {
+        None => {
+            tracing::warn!("gate/complete: blocked -- session not found id={}", input.session_id);
+            Json(json!({
+                "allowed": false,
+                "reason": format!("Session '{}' not found -- register with Eidolon before starting work", input.session_id)
+            }))
+        }
+        Some(session) => {
+            if session.engram_stores == 0 {
+                tracing::warn!(
+                    "gate/complete: blocked -- no engram stores session={} agent={}",
+                    input.session_id, session.agent
+                );
+                Json(json!({
+                    "allowed": false,
+                    "reason": "No Engram stores this session -- store at least one memory before completing"
+                }))
+            } else {
+                tracing::info!(
+                    "gate/complete: allowed session={} agent={} stores={}",
+                    input.session_id, session.agent, session.engram_stores
+                );
+                Json(json!({
+                    "allowed": true,
+                    "reason": format!("{} engram store(s) recorded", session.engram_stores)
+                }))
+            }
+        }
+    }
+}
