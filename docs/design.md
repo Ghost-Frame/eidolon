@@ -6,7 +6,7 @@
 **Status:** Experimental research
 **Supersedes:** 2026-03-27-neural-memory-design.md (fine-tuning approach abandoned)
 **Location:** Inside Engram itself. The brain IS Engram. Engram IS the brain.
-**Runtime:** Rocky (primary), Hetzner (production), Windows PC (secondary)
+**Runtime:** any machine where Engram runs
 
 ---
 
@@ -29,7 +29,7 @@ Engram becomes an extension of the operator's brain. Not a library to search -- 
 Example of how it should work:
 
 > Agent: "Engram runs on Windows"
-> Brain: "No. Engram used to run on Windows but it runs on Hetzner now. It has been on Hetzner for a week. What you think is wrong and here is why: [the migration happened on March 20th, here are the memories that document it, the Windows instance was decommissioned]."
+> Brain: "No. Engram used to run on Windows but it runs on production now. It has been on production for a week. What you think is wrong and here is why: [the migration happened on March 20th, here are the memories that document it, the Windows instance was decommissioned]."
 
 This is not retrieval. This is maintained understanding with temporal awareness and the confidence to correct.
 
@@ -43,11 +43,11 @@ Every memory that enters Engram becomes a **pattern of activation** across a hig
 
 ### 2. Associations Are Connection Weights, Not Foreign Keys
 
-Two concepts that co-occur do not get a join table row. The connection between their activation patterns strengthens. Over time, thinking about "Engram" naturally activates "Hetzner" because the connection is strong. "Windows" barely activates because that connection has decayed.
+Two concepts that co-occur do not get a join table row. The connection between their activation patterns strengthens. Over time, thinking about "Engram" naturally activates "production" because the connection is strong. "Windows" barely activates because that connection has decayed.
 
 ### 3. Contradiction Is Interference, Not a Flag
 
-When an old pattern ("Engram on Windows") and a new pattern ("Engram on Hetzner") overlap in the same conceptual region, they interfere. The stronger pattern dominates. The weaker one does not get deleted -- it fades. Still there if you dig, like a memory you can barely recall.
+When an old pattern ("Engram on Windows") and a new pattern ("Engram on production") overlap in the same conceptual region, they interfere. The stronger pattern dominates. The weaker one does not get deleted -- it fades. Still there if you dig, like a memory you can barely recall.
 
 ### 4. Querying Is Pattern Completion
 
@@ -87,7 +87,7 @@ A high-dimensional continuous vector space where every concept, entity, fact, an
 
 - **Dimensionality:** 256-1024 (to be determined experimentally)
 - **Every memory creates a pattern** that occupies a region in this space
-- **Patterns overlap** -- "Engram" and "Hetzner" share dimensions because they are connected
+- **Patterns overlap** -- "Engram" and "production" share dimensions because they are connected
 - **The space evolves** -- dimensions shift meaning as the brain learns
 
 ### The Network

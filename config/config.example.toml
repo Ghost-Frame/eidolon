@@ -1,0 +1,61 @@
+# Eidolon Daemon Configuration
+# Copy this to config/eidolon.toml and customize for your environment.
+
+[server]
+host = "127.0.0.1"
+port = 7700
+
+[brain]
+# Path to the Engram brain database
+db_path = "/path/to/engram/data/brain.db"
+# Directory for Eidolon data files
+data_dir = "/path/to/eidolon/data"
+
+[engram]
+url = "http://localhost:4200"
+# api_key = "your-engram-api-key"  # or set ENGRAM_API_KEY env var
+
+[credd]
+# Credential daemon URL for secret bootstrapping
+url = "http://127.0.0.1:4400"
+# agent_key = "your-credd-agent-key"  # or set CREDD_AGENT_KEY env var
+
+# API key for authenticating incoming requests to Eidolon
+# Set via EIDOLON_API_KEY env var or uncomment below:
+# [auth]
+# api_key = "your-eidolon-api-key"
+
+[safety]
+rules = [
+    "Do not reboot servers marked no_reboot without explicit confirmation",
+    "Test config files before reloading services (nginx -t, sshd -t, etc.)",
+    "Use SCP for file transfers, not heredoc over SSH",
+]
+protected_services = ["engram"]
+
+# Define your infrastructure servers for gate enrichment and prompt injection.
+# Uncomment and customize:
+#
+# [[servers]]
+# name = "production"
+# aliases = ["10.0.0.1", "prod-server"]
+# role = "Primary application server"
+# ssh_user = "deploy"
+# ssh_port = 22
+# notes = "Primary production. Runs the main application stack."
+# no_reboot = false
+# custom_port_required = false
+#
+# [[servers]]
+# name = "staging"
+# aliases = ["10.0.0.2", "staging-server"]
+# role = "Staging environment"
+# ssh_user = "deploy"
+# ssh_port = 22
+# notes = "Mirrors production config."
+
+[agents.claude-code]
+command = "claude"
+args = ["-p", "--output-format", "stream-json"]
+models = ["opus", "sonnet", "haiku"]
+default_model = "sonnet"

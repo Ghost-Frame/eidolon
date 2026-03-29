@@ -286,16 +286,16 @@ pub fn generate_instincts() -> InstinctsCorpus {
 
     // Category 3: Discovery / reference (20 memories)
     let references: &[(&str, &str, i64, i32)] = &[
-        ("server-specs", "app-server-1 server: 8 vCPU, 32GB RAM, 500GB NVMe SSD, Ubuntu 22.04. IP: 10.0.0.4. Location: BHS datacenter.", 700, 8),
-        ("server-specs", "edge-server-1 server: 4 vCPU, 16GB RAM, 200GB SSD, Rocky Linux 9. IP: 10.0.0.5. CDN edge node.", 702, 7),
-        ("server-specs", "rocky workstation: Xeon W-2125 4.0GHz 8-core, 30GB RAM, 2TB HDD. IP: 127.0.0.1. Primary dev machine.", 704, 9),
+        ("server-specs", "app-server-1: 8 vCPU, 32GB RAM, 500GB NVMe SSD, Ubuntu 22.04. Role: application services backend.", 700, 8),
+        ("server-specs", "edge-server-1: 4 vCPU, 16GB RAM, 200GB SSD, Rocky Linux 9. Role: CDN edge node and static assets.", 702, 7),
+        ("server-specs", "dev-workstation: Xeon W-2125 4.0GHz 8-core, 30GB RAM, 2TB HDD. Role: primary development and build machine.", 704, 9),
         ("endpoint", "Engram memory API: POST /store to persist memories, POST /search to query, GET /recall for recent. Auth via Bearer token.", 710, 8),
         ("endpoint", "Eidolon brain API: JSON over stdio. Commands: init, query, absorb, decay_tick, dream_cycle, get_stats, shutdown.", 712, 9),
-        ("filepath", "Brain database location: /opt/eidolon/eidolon/data/brain.db -- SQLite, contains memories, edges, pca_state tables.", 714, 8),
-        ("filepath", "Instincts binary: /opt/eidolon/eidolon/data/instincts.bin -- gzip-compressed JSON corpus, applied on first init when brain.db is empty.", 716, 7),
-        ("filepath", "Eidolon Rust source: /opt/eidolon/eidolon/rust/src/ -- substrate.rs, graph.rs, dreaming.rs, instincts.rs, main.rs.", 718, 6),
-        ("credential", "SSH key for all servers: ~/.ssh/id_ed25519 -- ed25519, no passphrase. OVH VPS uses port 4822.", 720, 9),
-        ("network", "VPN mesh subnet: 10.0.0.0/24. All nodes reachable by mesh IP. Use internal IPs for inter-service traffic.", 722, 8),
+        ("filepath", "Brain database location: /brain.db -- SQLite, contains memories, edges, pca_state tables.", 714, 8),
+        ("filepath", "Instincts binary: /instincts.bin -- gzip-compressed JSON corpus, applied on first init when brain.db is empty.", 716, 7),
+        ("filepath", "Eidolon Rust source: Eidolon source: src/ directory of eidolon-lib crate -- substrate.rs, graph.rs, dreaming.rs, instincts.rs, main.rs.", 718, 6),
+        ("credential", "SSH key for all servers: operator-configured SSH key. Custom ports may apply for specific servers.", 720, 9),
+        ("network", "VPN mesh subnet: configured in operator's mesh network. All nodes reachable by mesh IP.. Use internal IPs for inter-service traffic.", 722, 8),
         ("config", "Nginx config directory: /etc/nginx/sites-enabled/. Reload: nginx -t && systemctl reload nginx. Never restart without testing.", 730, 7),
         ("config", "PostgreSQL data directory: /var/lib/postgresql/16/main/. Config: /etc/postgresql/16/main/postgresql.conf.", 732, 7),
         ("config", "Redis config: /etc/redis/redis.conf. Bind 127.0.0.1 only. requirepass enabled. maxmemory-policy allkeys-lru.", 734, 6),
@@ -322,18 +322,18 @@ pub fn generate_instincts() -> InstinctsCorpus {
 
     // Category 4: Task completions (20 memories)
     let tasks: &[(&str, i64, i32)] = &[
-        ("Deploy Eidolon brain substrate Phase 1 to Rocky Linux. Result: binary at /opt/eidolon/eidolon/rust/target/release/eidolon. brain.db initialized with 847 memories from Engram export.", 800, 9),
+        ("Deploy Eidolon brain substrate Phase 1 to the development server. Result: binary at /target/release/eidolon. brain.db initialized with 847 memories from Engram export.", 800, 9),
         ("Migrate Engram database from SQLite to PostgreSQL. Result: 12,847 memories migrated, 0 data loss, query time improved from 45ms to 8ms at p99.", 810, 8),
         ("Fix memory leak in Eidolon decay module. Root cause: Vec not cleared after prune. Fix: add memory.retain() after dead_set removal. Leak eliminated.", 820, 9),
         ("Set up Traefik TLS termination for all subdomains. Let Encrypt wildcard cert via DNS challenge. All subdomains now HTTPS.", 830, 8),
         ("Configure Prometheus scrape targets for all nodes. Added: node_exporter, postgres_exporter, redis_exporter, nginx_exporter.", 840, 7),
-        ("Deploy CrowdSec on app-server-1 and edge-server-1. Installed bouncer for nginx. Community blocklist active. First 24h: 1,247 IPs blocked.", 850, 8),
+        ("Deploy CrowdSec on application and edge servers. Installed bouncer for nginx. Community blocklist active. First 24h: 1,247 IPs blocked.", 850, 8),
         ("Upgrade PostgreSQL 13 to 16 on db-primary. pg_upgrade used for in-place upgrade. Backup taken before: pg_dump 18GB. Zero data loss.", 860, 9),
         ("Implement JWT refresh token rotation in API server. Old refresh tokens invalidated on use. 7-day token expiry. Redis TTL set.", 870, 7),
         ("Set up automated restic backups on all nodes. Daily snapshots at 02:00 UTC. Retention: 7 daily, 4 weekly, 12 monthly.", 880, 8),
         ("Debug and fix Nginx upstream 502 errors. Root cause: backend pool exhausted due to connection leak in Python worker.", 890, 9),
         ("Enable TCP BBR on all Linux servers via sysctl. net.ipv4.tcp_congestion_control=bbr. p99 latency -23%, throughput +18%.", 900, 7),
-        ("Consolidate app-server-1 and edge-server-1 nginx configs into shared template. Reduced config duplication from 4 files to 1 template.", 910, 6),
+        ("Consolidate application and edge server nginx configs into shared template. Reduced config duplication from 4 files to 1 template.", 910, 6),
         ("Add memory decay monitoring to Engram dashboard. Alert when avg_decay_factor < 0.3. Grafana panel showing health_distribution over time.", 920, 7),
         ("Write Eidolon dreaming module. Implements: replay_recent, merge_redundant, prune_dead, discover_connections, resolve_lingering.", 930, 9),
         ("Write Eidolon instincts module. Generates 200 synthetic ghost patterns across 5 categories. Ghost replacement on cosine_sim > 0.85.", 940, 9),
@@ -380,12 +380,12 @@ pub fn generate_instincts() -> InstinctsCorpus {
         ),
         (
             "The SSH private key location is ~/.ssh/id_ed25519 on all machines.",
-            "CORRECTION: SSH key is ~/.ssh/id_ed25519, NOT ~/.ssh/id_ed25519. All server logins use -i ~/.ssh/id_ed25519. OVH VPS also requires -p 4822.",
+            "CORRECTION: SSH key is the operator-configured SSH key, NOT ~/.ssh/id_ed25519. All server logins use the operator-configured SSH key. Custom ports may apply for specific servers.",
             1180, 1192, 5, 9
         ),
         (
             "Eidolon brain.db is stored at /var/lib/eidolon/brain.db.",
-            "CORRECTION: brain.db is at /opt/eidolon/eidolon/data/brain.db, not /var/lib/eidolon/. The data_dir is /data/.",
+            "CORRECTION: brain.db is at /brain.db, not /var/lib/eidolon/. The data_dir is /.",
             1200, 1212, 5, 8
         ),
         (

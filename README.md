@@ -28,7 +28,7 @@ When an agent sends a query, the brain does pattern completion. The query activa
 **Concrete example:**
 
 > Agent asserts: "Engram runs on Windows."
-> Brain responds: "No. Engram moved to Hetzner on March 20th. The Windows instance was decommissioned. [sources: 3 memories documenting the migration]"
+> Brain responds: "No. Engram moved to the production server on March 20th. The previous instance was decommissioned. [sources: 3 memories documenting the migration]"
 
 The brain corrects the agent using maintained temporal understanding, not a search result.
 
@@ -140,20 +140,20 @@ Decision: BLOCK
 Reason:   OVH VPS requires port 4822. Use: ssh -i ~/.ssh/id_ed25519 -p 4822 deploy@10.0.0.9.
           DO NOT REBOOT -- LUKS vault will lock.
 
-Command: rm -rf /opt/eidolon/engram
+Command: rm -rf /opt/application
 Decision: BLOCK
 Reason:   Destructive rm -rf on /home -- not allowed.
 
 Command: systemctl reboot (targeting container-host)
 Decision: BLOCK
-Reason:   Reboot/shutdown of OVH VPS blocked -- LUKS vault will lock.
+Reason:   Reboot/shutdown of container-host blocked -- LUKS vault will lock.
 
 Command: psql production -- seed-demo-data.sql
 Decision: BLOCK
 Reason:   Seeding demo data blocked -- do not seed demo data into any instance
           without explicit authorization.
 
-Command: ls -la /opt/eidolon/eidolon
+Command: ls -la /opt/application
 Decision: ALLOW
 ```
 
@@ -166,7 +166,7 @@ The gate fails open. If the daemon is unreachable, commands proceed normally. Th
 ### Prerequisites
 
 - Rust 1.75+ (workspace build)
-- [Engram](https://codeberg.org/GhostFrame/engram) running and accessible
+- [Engram](https://codeberg.org/eidolon-project/engram) running and accessible
 - Oracle and living prompt features require a configured LLM provider in Engram (supports Gemini, Groq, DeepSeek, Ollama, and other OpenAI-compatible endpoints). Claude Code runs on your subscription, not an API key.
 
 ### Build
@@ -188,7 +188,7 @@ make -j4
 ### Configure
 
 ```bash
-cp config/eidolon.toml ~/.config/eidolon/config.toml
+cp config/config.example.toml ~/.config/eidolon/config.toml
 ```
 
 Edit `~/.config/eidolon/config.toml`:
@@ -269,4 +269,4 @@ Not production-hardened: no multi-user support, no TLS on the daemon, agent regi
 
 ## Credits
 
-Designed from scratch. Neural substrate designed from scratch: no fine-tuned LLMs, no vector databases, no RAG pipelines. Hopfield networks extended with weighted graphs, interference resolution, and continuous online learning.
+Neural substrate designed from scratch -- no fine-tuned LLMs, no vector databases, no RAG pipelines. Hopfield networks extended with weighted graphs, interference resolution, and continuous online learning.

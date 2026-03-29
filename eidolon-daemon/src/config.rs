@@ -24,7 +24,7 @@ pub struct BrainConfig {
 
 impl Default for BrainConfig {
     fn default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/zan".to_string());
+        let home = default_home();
         BrainConfig {
             db_path: format!("{}/engram/data/brain.db", home),
             data_dir: format!("{}/eidolon/data", home),
@@ -68,6 +68,50 @@ impl Default for RawEngramConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreddConfig {
+    pub url: String,
+    pub agent_key: Option<String>,
+    pub tier3_trust_threshold: u8,
+}
+
+impl Default for CreddConfig {
+    fn default() -> Self {
+        CreddConfig {
+            url: "http://127.0.0.1:4400".to_string(),
+            agent_key: None,
+            tier3_trust_threshold: 80,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCreddConfig {
+    #[serde(default = "default_credd_url")]
+    url: String,
+    agent_key: Option<String>,
+    #[serde(default = "default_tier3_threshold")]
+    tier3_trust_threshold: u8,
+}
+
+fn default_credd_url() -> String {
+    "http://127.0.0.1:4400".to_string()
+}
+
+fn default_tier3_threshold() -> u8 {
+    80
+}
+
+impl Default for RawCreddConfig {
+    fn default() -> Self {
+        RawCreddConfig {
+            url: default_credd_url(),
+            agent_key: None,
+            tier3_trust_threshold: default_tier3_threshold(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub command: String,
     #[serde(default)]
@@ -92,6 +136,39 @@ impl Default for AgentConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerEntry {
+    pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    pub role: String,
+    pub ssh_user: String,
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub no_reboot: bool,
+    #[serde(default)]
+    pub custom_port_required: bool,
+}
+
+fn default_ssh_port() -> u16 { 22 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SafetyConfig {
+    #[serde(default)]
+    pub rules: Vec<String>,
+    #[serde(default)]
+    pub protected_services: Vec<String>,
+}
+
+fn default_home() -> String {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/tmp".to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -100,7 +177,13 @@ pub struct Config {
     #[serde(default)]
     pub engram: EngramConfig,
     #[serde(default)]
+    pub credd: CreddConfig,
+    #[serde(default)]
     pub agents: HashMap<String, AgentConfig>,
+    #[serde(default)]
+    pub servers: Vec<ServerEntry>,
+    #[serde(default)]
+    pub safety: SafetyConfig,
     // Not stored in toml -- loaded from env var EIDOLON_API_KEY or toml [auth] section
     #[serde(skip)]
     pub api_key: String,
@@ -114,7 +197,10 @@ impl Default for Config {
             server: ServerConfig::default(),
             brain: BrainConfig::default(),
             engram: EngramConfig::default(),
+            credd: CreddConfig::default(),
             agents,
+            servers: Vec::new(),
+            safety: SafetyConfig::default(),
             api_key: String::new(),
         }
     }
@@ -129,7 +215,13 @@ struct RawConfig {
     #[serde(default)]
     engram: RawEngramConfig,
     #[serde(default)]
+    credd: RawCreddConfig,
+    #[serde(default)]
     agents: HashMap<String, AgentConfig>,
+    #[serde(default)]
+    servers: Vec<ServerEntry>,
+    #[serde(default)]
+    safety: SafetyConfig,
     #[serde(default)]
     auth: AuthConfig,
 }
@@ -141,7 +233,7 @@ struct AuthConfig {
 
 impl Config {
     pub fn default_path() -> String {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/zan".to_string());
+        let home = default_home();
         format!("{}/.config/eidolon/config.toml", home)
     }
 
@@ -152,18 +244,18 @@ impl Config {
         let raw: RawConfig = toml::from_str(&content)
             .map_err(|e| format!("failed to parse config {}: {}", path, e))?;
 
-        // API key: env var takes precedence over config file
+        // API key: env var > config file > empty (will be filled by credd bootstrap)
         let api_key = std::env::var("EIDOLON_API_KEY")
             .ok()
             .or(raw.auth.api_key)
             .unwrap_or_default();
 
-        if api_key.is_empty() {
-            return Err("EIDOLON_API_KEY is required (set env var or [auth] api_key in config)".to_string());
-        }
-
-        // Engram API key: env var takes precedence over config file
+        // Engram API key: env var > config file > None (will be filled by credd bootstrap)
         let engram_api_key = std::env::var("ENGRAM_API_KEY").ok().or(raw.engram.api_key);
+
+        // Credd: env vars take precedence over config file
+        let credd_url = std::env::var("CREDD_URL").unwrap_or(raw.credd.url);
+        let credd_agent_key = std::env::var("CREDD_AGENT_KEY").ok().or(raw.credd.agent_key);
 
         Ok(Config {
             server: raw.server,
@@ -172,7 +264,14 @@ impl Config {
                 url: raw.engram.url,
                 api_key: engram_api_key,
             },
+            credd: CreddConfig {
+                url: credd_url,
+                agent_key: credd_agent_key,
+                tier3_trust_threshold: raw.credd.tier3_trust_threshold,
+            },
             agents: raw.agents,
+            servers: raw.servers,
+            safety: raw.safety,
             api_key,
         })
     }
@@ -193,6 +292,10 @@ impl Config {
             let mut cfg = Config::default();
             cfg.api_key = api_key;
             cfg.engram.api_key = std::env::var("ENGRAM_API_KEY").ok();
+            if let Ok(url) = std::env::var("CREDD_URL") {
+                cfg.credd.url = url;
+            }
+            cfg.credd.agent_key = std::env::var("CREDD_AGENT_KEY").ok();
             cfg
         };
 
@@ -203,4 +306,74 @@ impl Config {
 
         Ok(config)
     }
+
+    /// Fetch secrets from credd to populate api_key and engram.api_key.
+    /// Called after load. Requires credd.agent_key to be set.
+    pub async fn bootstrap_from_credd(&mut self, http: &reqwest::Client) -> Result<(), String> {
+        let agent_key = match &self.credd.agent_key {
+            Some(k) if !k.is_empty() => k.clone(),
+            _ => return Err("credd.agent_key required for bootstrap".to_string()),
+        };
+
+        let credd_url = &self.credd.url;
+
+        // Fetch Engram API key for Eidolon's dedicated instance
+        match credd_fetch(http, credd_url, &agent_key, "engram", "api-key-eidolon").await {
+            Ok(secret) => {
+                self.engram.api_key = Some(extract_api_key(&secret)?);
+                tracing::info!("bootstrapped engram api key from credd");
+            }
+            Err(e) => {
+                if self.engram.api_key.is_none() {
+                    return Err(format!("credd: engram api key: {}", e));
+                }
+                tracing::warn!("credd engram key fetch failed (using config fallback): {}", e);
+            }
+        }
+
+        // Fetch Eidolon's own API key (for authenticating incoming requests)
+        let instance_name = if self.server.port == 7700 { "hetzner" } else { "rocky" };
+        match credd_fetch(http, credd_url, &agent_key, "eidolon", instance_name).await {
+            Ok(secret) => {
+                self.api_key = extract_api_key(&secret)?;
+                tracing::info!("bootstrapped eidolon api key from credd (instance={})", instance_name);
+            }
+            Err(e) => {
+                if self.api_key.is_empty() {
+                    return Err(format!("credd: eidolon api key: {}", e));
+                }
+                tracing::warn!("credd eidolon key fetch failed (using config fallback): {}", e);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+async fn credd_fetch(
+    http: &reqwest::Client,
+    credd_url: &str,
+    agent_key: &str,
+    service: &str,
+    key: &str,
+) -> Result<serde_json::Value, String> {
+    let url = format!("{}/secret/{}/{}", credd_url, service, key);
+    let resp = http.get(&url)
+        .header("Authorization", format!("Bearer {}", agent_key))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("credd fetch {}/{}: {}", service, key, e))?;
+    if !resp.status().is_success() {
+        return Err(format!("credd {}/{}: HTTP {}", service, key, resp.status()));
+    }
+    resp.json().await.map_err(|e| format!("credd {}/{} parse: {}", service, key, e))
+}
+
+fn extract_api_key(secret: &serde_json::Value) -> Result<String, String> {
+    secret.get("value")
+        .and_then(|v| v.get("key"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "failed to extract key from credd response".to_string())
 }

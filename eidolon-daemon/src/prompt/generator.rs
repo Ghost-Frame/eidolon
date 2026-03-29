@@ -8,7 +8,6 @@ use super::templates;
 const SCRUB_PATTERNS: &[&str] = &[
     "password", "passwd", "secret", "token", "api_key", "apikey",
     "private_key", "bearer", "authorization", "credential",
-    "ssh_key", "ssh key", "private key", "passphrase",
 ];
 
 #[allow(dead_code)]
@@ -19,12 +18,7 @@ pub struct MemorySummary {
     pub activation: f32,
 }
 
-fn scrub_credentials(text: &str, category: &str) -> String {
-    // If the memory's category itself signals credential content, redact everything
-    if category.to_lowercase().contains("credential") {
-        return "[CREDENTIAL REDACTED -- use credential manager]\n".to_string();
-    }
-
+fn scrub_credentials(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     for line in text.lines() {
         let line_lower = line.to_lowercase();
@@ -61,11 +55,10 @@ async fn search_engram(
                 .ok()
                 .and_then(|v| v["results"].as_array().map(|arr| {
                     arr.iter().filter_map(|m| {
-                        let category = m["category"].as_str()?.to_string();
                         Some(MemorySummary {
                             id: m["id"].as_i64().unwrap_or(0),
-                            content: scrub_credentials(m["content"].as_str()?, &category),
-                            category,
+                            content: scrub_credentials(m["content"].as_str()?),
+                            category: m["category"].as_str()?.to_string(),
                             activation: m["score"].as_f64().unwrap_or(0.5) as f32,
                         })
                     }).collect()
@@ -97,8 +90,6 @@ pub async fn generate_prompt(
     let failure_query = format!("failure problem error issue {}", task);
     let failure_memories = search_engram(state, &failure_query, 5).await;
 
-    let chiasm_url = std::env::var("CHIASM_URL")
-        .unwrap_or_else(|_| "http://localhost:4201".to_string());
     let engram_url = &state.config.engram.url;
 
     templates::build_living_prompt(
@@ -108,6 +99,7 @@ pub async fn generate_prompt(
         &safety_memories,
         &failure_memories,
         engram_url,
-        &chiasm_url,
+        &state.config.servers,
+        &state.config.safety.rules,
     )
 }
