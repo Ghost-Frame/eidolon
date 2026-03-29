@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -7,10 +6,13 @@ mod agents;
 mod config;
 mod prompt;
 mod routes;
+mod scrubbing;
+mod secrets;
 mod server;
 mod session;
 
 use config::Config;
+use scrubbing::ScrubRegistry;
 use session::SessionManager;
 use eidolon_lib::brain::Brain;
 
@@ -19,6 +21,7 @@ pub struct AppState {
     pub sessions: Arc<Mutex<SessionManager>>,
     pub config: Config,
     pub http_client: reqwest::Client,
+    pub scrub_registry: Arc<Mutex<ScrubRegistry>>,
 }
 
 #[tokio::main]
@@ -62,6 +65,7 @@ async fn main() {
             .build()
             .unwrap(),
         config,
+        scrub_registry: Arc::new(Mutex::new(ScrubRegistry::new())),
     });
 
     let bind_addr = format!("{}:{}", state.config.server.host, state.config.server.port);
@@ -77,14 +81,7 @@ async fn main() {
 
     tracing::info!("listening on {}", bind_addr);
 
-    // Use into_make_service_with_connect_info so ConnectInfo<SocketAddr> is
-    // available in middleware (needed for /gate/check localhost-only bypass).
-    if let Err(e) = axum::serve(
-        listener,
-        router.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
-    {
+    if let Err(e) = axum::serve(listener, router).await {
         eprintln!("[eidolon-daemon] server error: {}", e);
         std::process::exit(1);
     }

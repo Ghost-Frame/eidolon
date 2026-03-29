@@ -68,6 +68,50 @@ impl Default for RawEngramConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreddConfig {
+    pub url: String,
+    pub agent_key: Option<String>,
+    pub tier3_trust_threshold: u8,
+}
+
+impl Default for CreddConfig {
+    fn default() -> Self {
+        CreddConfig {
+            url: "http://10.0.0.3:4400".to_string(),
+            agent_key: None,
+            tier3_trust_threshold: 80,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCreddConfig {
+    #[serde(default = "default_credd_url")]
+    url: String,
+    agent_key: Option<String>,
+    #[serde(default = "default_tier3_threshold")]
+    tier3_trust_threshold: u8,
+}
+
+fn default_credd_url() -> String {
+    "http://10.0.0.3:4400".to_string()
+}
+
+fn default_tier3_threshold() -> u8 {
+    80
+}
+
+impl Default for RawCreddConfig {
+    fn default() -> Self {
+        RawCreddConfig {
+            url: default_credd_url(),
+            agent_key: None,
+            tier3_trust_threshold: default_tier3_threshold(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub command: String,
     #[serde(default)]
@@ -100,6 +144,8 @@ pub struct Config {
     #[serde(default)]
     pub engram: EngramConfig,
     #[serde(default)]
+    pub credd: CreddConfig,
+    #[serde(default)]
     pub agents: HashMap<String, AgentConfig>,
     // Not stored in toml -- loaded from env var EIDOLON_API_KEY or toml [auth] section
     #[serde(skip)]
@@ -114,6 +160,7 @@ impl Default for Config {
             server: ServerConfig::default(),
             brain: BrainConfig::default(),
             engram: EngramConfig::default(),
+            credd: CreddConfig::default(),
             agents,
             api_key: String::new(),
         }
@@ -128,6 +175,8 @@ struct RawConfig {
     brain: BrainConfig,
     #[serde(default)]
     engram: RawEngramConfig,
+    #[serde(default)]
+    credd: RawCreddConfig,
     #[serde(default)]
     agents: HashMap<String, AgentConfig>,
     #[serde(default)]
@@ -165,12 +214,21 @@ impl Config {
         // Engram API key: env var takes precedence over config file
         let engram_api_key = std::env::var("ENGRAM_API_KEY").ok().or(raw.engram.api_key);
 
+        // Credd: env vars take precedence over config file
+        let credd_url = std::env::var("CREDD_URL").unwrap_or(raw.credd.url);
+        let credd_agent_key = std::env::var("CREDD_AGENT_KEY").ok().or(raw.credd.agent_key);
+
         Ok(Config {
             server: raw.server,
             brain: raw.brain,
             engram: EngramConfig {
                 url: raw.engram.url,
                 api_key: engram_api_key,
+            },
+            credd: CreddConfig {
+                url: credd_url,
+                agent_key: credd_agent_key,
+                tier3_trust_threshold: raw.credd.tier3_trust_threshold,
             },
             agents: raw.agents,
             api_key,
@@ -193,6 +251,10 @@ impl Config {
             let mut cfg = Config::default();
             cfg.api_key = api_key;
             cfg.engram.api_key = std::env::var("ENGRAM_API_KEY").ok();
+            if let Ok(url) = std::env::var("CREDD_URL") {
+                cfg.credd.url = url;
+            }
+            cfg.credd.agent_key = std::env::var("CREDD_AGENT_KEY").ok();
             cfg
         };
 

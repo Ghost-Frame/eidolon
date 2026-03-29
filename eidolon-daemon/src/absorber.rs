@@ -40,19 +40,23 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
     };
 
     let importance = match status {
-        SessionStatus::Completed => 7,
-        _ => 6,
+        SessionStatus::Completed => 6,
+        _ => 7,
     };
 
-    // Build summary
-    let summary = format!(
-        "Eidolon session ({}) for task \"{}\": {}. Agent: {}. Corrections: {}.",
-        short_id,
-        task.chars().take(100).collect::<String>(),
-        outcome,
-        agent,
-        corrections,
-    );
+    // Build summary (scrub tier-3 secrets before storing)
+    let summary = {
+        let raw = format!(
+            "Eidolon session ({}) for task \"{}\": {}. Agent: {}. Corrections: {}.",
+            short_id,
+            task.chars().take(100).collect::<String>(),
+            outcome,
+            agent,
+            corrections,
+        );
+        let scrub = state.scrub_registry.lock().await;
+        scrub.scrub(&session_id, &raw)
+    };
 
     // Store session summary to Engram
     let store_url = format!("{}/store", state.config.engram.url);
@@ -87,7 +91,11 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
         .collect();
 
     for line in blocked_lines.iter().take(5) {
-        let block_content = format!("Gate blocked action in session {}: {}", short_id, line);
+        let block_content = {
+            let raw = format!("Gate blocked action in session {}: {}", short_id, line);
+            let scrub = state.scrub_registry.lock().await;
+            scrub.scrub(&session_id, &raw)
+        };
         let _ = store_request(&state, &store_url, json!({
                 "content": block_content,
                 "category": "issue",
@@ -111,12 +119,16 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
 
     if !discovery_lines.is_empty() {
         let discoveries = discovery_lines.join("\n");
-        let discovery_content = format!(
-            "Session {} discoveries for task \"{}\": {}",
-            short_id,
-            task.chars().take(80).collect::<String>(),
-            discoveries,
-        );
+        let discovery_content = {
+            let raw = format!(
+                "Session {} discoveries for task \"{}\": {}",
+                short_id,
+                task.chars().take(80).collect::<String>(),
+                discoveries,
+            );
+            let scrub = state.scrub_registry.lock().await;
+            scrub.scrub(&session_id, &raw)
+        };
         let _ = store_request(&state, &store_url, json!({
                 "content": discovery_content,
                 "category": "discovery",
@@ -126,5 +138,11 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
             .send()
             .await;
         tracing::info!("absorber: stored {} discovery lines for session {}", discovery_lines.len(), short_id);
+    }
+
+    // Clean up scrub tracking for this session
+    {
+        let mut scrub = state.scrub_registry.lock().await;
+        scrub.remove_session(&session_id);
     }
 }

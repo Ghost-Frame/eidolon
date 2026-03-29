@@ -19,44 +19,59 @@ fn build_gate_hook(daemon_host: &str, daemon_port: u16) -> String {
     // Shell script for Claude Code PreToolUse hook.
     // Claude Code sends tool input JSON via stdin when it executes the hook command.
     // Exit 0 = allow. Exit 2 = block (stderr message shown to agent). Fails open.
-    format!(
-        r#"#!/bin/bash
-# Eidolon gate hook -- called by Claude Code before each tool use.
-# Reads tool input JSON from stdin, checks with daemon, exits 0 (allow) or 2 (block).
-INPUT=$(cat)
-if [ -z "$INPUT" ]; then
-  exit 0
-fi
-RESP=$(echo "$INPUT" | curl -sf --max-time 3 -X POST http://{host}:{port}/gate/check \
-  -H "Content-Type: application/json" \
-  -d @- 2>/dev/null)
-CURL_EXIT=$?
-if [ $CURL_EXIT -ne 0 ] || [ -z "$RESP" ]; then
-  # Daemon unreachable -- fail open
-  exit 0
-fi
-ACTION=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('action','allow'))" 2>/dev/null || echo "allow")
+    // When modified_input is present, outputs hookSpecificOutput JSON to stdout
+    // so Claude Code uses the modified tool input (with secrets substituted).
+    //
+    // NOTE: We build the script via string concatenation instead of format!() because
+    // the embedded Python code contains dict literals ({...}) that conflict with
+    // Rust's format string syntax.
+    let mut script = String::from("#!/bin/bash\n");
+    script.push_str("# Eidolon gate hook -- called by Claude Code before each tool use.\n");
+    script.push_str("INPUT=$(cat)\n");
+    script.push_str("if [ -z \"$INPUT\" ]; then\n  exit 0\nfi\n");
+    script.push_str(&format!(
+        "RESP=$(echo \"$INPUT\" | curl -sf --max-time 3 -X POST http://{}:{}/gate/check \\\n",
+        daemon_host, daemon_port
+    ));
+    script.push_str("  -H \"Content-Type: application/json\" \\\n");
+    script.push_str("  -d @- 2>/dev/null)\n");
+    script.push_str("CURL_EXIT=$?\n");
+    script.push_str("if [ $CURL_EXIT -ne 0 ] || [ -z \"$RESP\" ]; then\n  exit 0\nfi\n");
+    // Use Python to parse response. The Python builds hookSpecificOutput JSON
+    // when modified_input is present in the gate response.
+    script.push_str(r#"ACTION=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('action','allow'))" 2>/dev/null || echo "allow")
+MODIFIED_OUTPUT=$(echo "$RESP" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+mi = d.get('modified_input')
+if mi is not None:
+    out = dict()
+    out['hookSpecificOutput'] = dict()
+    out['hookSpecificOutput']['hookEventName'] = 'PreToolUse'
+    out['hookSpecificOutput']['permissionDecision'] = 'allow'
+    out['hookSpecificOutput']['updatedInput'] = mi
+    print(json.dumps(out))
+" 2>/dev/null)
+MSG=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message',''))" 2>/dev/null)
 if [ "$ACTION" = "block" ]; then
-  MSG=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message','blocked by gate'))" 2>/dev/null)
-  echo "$MSG" >&2
+  echo "${MSG:-blocked by gate}" >&2
   exit 2
 fi
-if [ "$ACTION" = "enrich" ]; then
-  CTX=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message',''))" 2>/dev/null)
-  if [ -n "$CTX" ]; then
-    echo "[gate] $CTX" >&2
-  fi
+if [ "$ACTION" = "enrich" ] && [ -n "$MSG" ]; then
+  echo "[gate] $MSG" >&2
+fi
+if [ -n "$MODIFIED_OUTPUT" ]; then
+  echo "$MODIFIED_OUTPUT"
 fi
 exit 0
-"#,
-        host = daemon_host,
-        port = daemon_port,
-    )
+"#);
+    script
 }
 
 fn build_settings_json(hook_path: &str) -> serde_json::Value {
     // Use the full absolute path to the hook script.
     // Claude Code passes tool input via stdin when running hook commands.
+    // Empty matcher matches ALL tools -- needed for secret substitution in any tool input.
     let hook_cmd = format!("bash {}", hook_path);
     serde_json::json!({
         "permissions": {
@@ -65,33 +80,12 @@ fn build_settings_json(hook_path: &str) -> serde_json::Value {
         "hooks": {
             "PreToolUse": [
                 {
-                    "matcher": "Bash",
-                    "hooks": [{"type": "command", "command": hook_cmd, "timeout": 5}]
-                },
-                {
-                    "matcher": "Write",
+                    "matcher": "",
                     "hooks": [{"type": "command", "command": hook_cmd, "timeout": 5}]
                 }
             ]
         }
     })
-}
-
-/// RAII guard that removes a directory tree when dropped.
-/// Spawns a detached tokio task so cleanup is non-blocking and
-/// fires even if the caller returns early via `?`.
-struct TempDirCleanup {
-    path: String,
-}
-
-impl Drop for TempDirCleanup {
-    fn drop(&mut self) {
-        let dir = self.path.clone();
-        // spawn a fire-and-forget task; ignore errors (best-effort cleanup)
-        tokio::spawn(async move {
-            let _ = tokio::fs::remove_dir_all(&dir).await;
-        });
-    }
 }
 
 pub async fn run_claude_code(
@@ -107,22 +101,6 @@ pub async fn run_claude_code(
     tokio::fs::create_dir_all(&format!("{}/.claude", session_dir))
         .await
         .map_err(|e| format!("failed to create session dir: {}", e))?;
-
-    // Restrict session dir to owner-only (0o700) to protect hook script and keys
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(
-            &session_dir,
-            std::fs::Permissions::from_mode(0o700),
-        )
-        .await
-        .map_err(|e| format!("failed to set session dir permissions: {}", e))?;
-    }
-
-    // Register cleanup guard -- directory is removed when this guard drops,
-    // regardless of which exit path (success, error, panic) is taken.
-    let _cleanup = TempDirCleanup { path: session_dir.clone() };
 
     // Write CLAUDE.md with living prompt
     tokio::fs::write(format!("{}/CLAUDE.md", session_dir), living_prompt)
@@ -245,7 +223,8 @@ pub async fn run_claude_code(
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
-    // _cleanup guard drops here and removes session_dir asynchronously
+    // Cleanup temp dir
+    let _ = tokio::fs::remove_dir_all(&session_dir).await;
 
     Ok(exit_status.code().unwrap_or(-1))
 }

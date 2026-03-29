@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::AppState;
+use crate::secrets::{self, CreddClient};
 
 // Known server mapping: IP/hostname -> (canonical name, notes)
 struct ServerInfo {
@@ -64,18 +65,62 @@ pub async fn gate_check(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    let command = input.get("command")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
     let session_id = input.get("session_id")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
+
+    // --- Secret resolution (runs FIRST, before all other gate logic) ---
+    let mut modified_input: Option<Value> = None;
+
+    if let Some(ref agent_key) = state.config.credd.agent_key {
+        let credd_client = CreddClient::new(
+            &state.config.credd.url,
+            agent_key,
+            state.http_client.clone(),
+        );
+
+        let resolution = secrets::resolve_secrets(
+            &credd_client,
+            &input,
+            tool_name,
+            session_id,
+            state.config.credd.tier3_trust_threshold,
+        )
+        .await;
+
+        // Log any resolution errors (non-fatal)
+        for err in &resolution.errors {
+            tracing::warn!("gate: secret resolution error: {} session={}", err, session_id);
+        }
+
+        // Track tier-3 values for scrubbing
+        if !resolution.tier3_values.is_empty() {
+            let mut scrub = state.scrub_registry.lock().await;
+            for val in &resolution.tier3_values {
+                scrub.track(session_id, val.clone());
+            }
+        }
+
+        if resolution.modified_input.is_some() {
+            tracing::info!("gate: secrets resolved tool={} session={}", tool_name, session_id);
+            modified_input = resolution.modified_input;
+        }
+    }
+
+    // Use modified input for subsequent checks if secrets were resolved
+    let effective_input = modified_input.as_ref().unwrap_or(&input);
+
+    let command = effective_input.get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     // Fast path: read-only tools always allowed
     match tool_name {
         "Read" | "Glob" | "Grep" | "LS" | "TodoRead" => {
             tracing::debug!("gate: allow (read-only tool) tool={} session={}", tool_name, session_id);
+            if let Some(mi) = modified_input {
+                return Json(json!({"action": "allow", "modified_input": mi}));
+            }
             return Json(json!({"action": "allow"}));
         }
         _ => {}
@@ -83,10 +128,13 @@ pub async fn gate_check(
 
     // Empty command -- allow
     if command.trim().is_empty() && tool_name != "Bash" {
+        if let Some(mi) = modified_input {
+            return Json(json!({"action": "allow", "modified_input": mi}));
+        }
         return Json(json!({"action": "allow"}));
     }
 
-    // Static dangerous pattern checks
+    // Static dangerous pattern checks (run on resolved command)
     if let Some(block_reason) = check_dangerous_patterns(command) {
         tracing::warn!("gate: BLOCK tool={} reason={} session={}", tool_name, block_reason, session_id);
         return Json(json!({
@@ -95,44 +143,39 @@ pub async fn gate_check(
         }));
     }
 
-    // Check for command substitution ($() or backticks) -- scan those too
-    let has_substitution = command.contains("$(") || command.contains('`');
-
-    // SSH command checks (block wrong servers, enrich correct ones).
-    // Match on bare token basename to handle /usr/bin/ssh and similar paths.
-    let looks_like_ssh = command_contains_tool(command, "ssh")
-        || command_contains_tool(command, "scp")
-        || has_substitution && (command.contains("ssh") || command.contains("scp"));
-    if looks_like_ssh {
-        if let Some(result) = check_ssh_command(command, &state).await {
+    // SSH command checks (block wrong servers, enrich correct ones)
+    if command.contains("ssh ") || command.starts_with("ssh") {
+        if let Some(mut result) = check_ssh_command(command, &state).await {
             let action = result.get("action").and_then(|v| v.as_str()).unwrap_or("allow");
             tracing::info!("gate: {} (ssh check) tool={} session={}", action, tool_name, session_id);
+            // Attach modified_input if secrets were resolved and action is not block
+            if action != "block" {
+                if let Some(mi) = modified_input {
+                    result.as_object_mut().map(|obj| obj.insert("modified_input".to_string(), mi));
+                }
+            }
             return Json(result);
         }
     }
 
-    // systemctl enrichment -- match on basename too
-    let looks_like_systemctl = command_contains_tool(command, "systemctl")
-        || has_substitution && command.contains("systemctl");
-    if looks_like_systemctl {
-        if let Some(enrichment) = check_systemctl_command(command, &state).await {
+    // systemctl enrichment
+    if command.contains("systemctl ") {
+        if let Some(mut enrichment) = check_systemctl_command(command, &state).await {
             tracing::info!("gate: enrich (systemctl context) tool={} session={}", tool_name, session_id);
+            if let Some(mi) = modified_input {
+                enrichment.as_object_mut().map(|obj| obj.insert("modified_input".to_string(), mi));
+            }
             return Json(enrichment);
         }
     }
 
-    // Default: allow
+    // Default: allow (with modified_input if secrets were resolved)
     tracing::debug!("gate: allow tool={} session={}", tool_name, session_id);
-    Json(json!({"action": "allow"}))
-}
-
-/// Returns true if any whitespace-delimited token in `command` has a basename
-/// matching `tool_name`. Handles paths like /usr/bin/ssh and ./ssh.
-fn command_contains_tool(command: &str, tool_name: &str) -> bool {
-    command.split_whitespace().any(|token| {
-        let basename = token.rsplit('/').next().unwrap_or(token);
-        basename == tool_name
-    })
+    if let Some(mi) = modified_input {
+        Json(json!({"action": "allow", "modified_input": mi}))
+    } else {
+        Json(json!({"action": "allow"}))
+    }
 }
 
 fn check_dangerous_patterns(command: &str) -> Option<String> {
@@ -202,11 +245,7 @@ fn check_dangerous_patterns(command: &str) -> Option<String> {
 
 async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
-    // Find ssh token by basename so /usr/bin/ssh is handled correctly
-    let ssh_pos = tokens.iter().position(|t| {
-        let basename = t.rsplit('/').next().unwrap_or(t);
-        basename == "ssh" || basename == "scp"
-    })?;
+    let ssh_pos = tokens.iter().position(|&t| t == "ssh")?;
 
     let mut host_raw: Option<&str> = None;
     let mut port: Option<u16> = None;
@@ -314,11 +353,7 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
 
 async fn check_systemctl_command(command: &str, state: &AppState) -> Option<Value> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
-    // Find systemctl token by basename so /usr/bin/systemctl is handled correctly
-    let systemctl_pos = tokens.iter().position(|t| {
-        let basename = t.rsplit('/').next().unwrap_or(t);
-        basename == "systemctl"
-    })?;
+    let systemctl_pos = tokens.iter().position(|&t| t == "systemctl")?;
 
     let action = tokens.get(systemctl_pos + 1).copied().unwrap_or("");
     let service = tokens.iter()
