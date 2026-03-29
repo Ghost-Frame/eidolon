@@ -73,6 +73,25 @@ pub async fn gate_check(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
+    // Track Engram store calls for session enforcement
+    let is_engram_store =
+        (tool_name == "Bash" && (
+            command.contains("engram-cli store") ||
+            (command.contains("/store") && command.contains(state.config.engram.url.as_str().split("//").last().unwrap_or("")))
+        )) ||
+        (tool_name.starts_with("mcp__") && tool_name.contains("store"));
+
+    if is_engram_store && session_id != "unknown" {
+        let mut sessions = state.sessions.lock().await;
+        if let Some(session) = sessions.get_session_mut(session_id) {
+            session.engram_stores += 1;
+            tracing::info!(
+                "gate: engram store tracked session={} total={}",
+                session_id, session.engram_stores
+            );
+        }
+    }
+
     // Fast path: read-only tools always allowed
     match tool_name {
         "Read" | "Glob" | "Grep" | "LS" | "TodoRead" => {
