@@ -99,5 +99,7 @@ pub async fn generate_prompt(
         &safety_memories,
         &failure_memories,
         engram_url,
+        &state.config.servers,
+        &state.config.safety.rules,
     )
 }

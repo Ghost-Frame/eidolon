@@ -5,7 +5,7 @@
 **Date:** 2026-03-27
 **Status:** Design approved
 **Depends on:** Eidolon Phase 1 (neural substrate) + Phase 2 (oracle, dreaming, instincts, evolution)
-**Location:** Eidolon service on Rocky (primary), deployable anywhere Engram runs
+**Location:** Eidolon service on dev-server (primary), deployable anywhere Engram runs
 
 ---
 
@@ -120,22 +120,22 @@ The living prompt is a document the brain writes, not a template with variables.
 **Example generated prompt:**
 
 ```
-You are working on: Deploy Engram to Hetzner
+You are working on: Deploy Engram to production
 
 ## Current State
-- Engram production: production (10.0.0.2:4200), SSH as deploy, key ~/.ssh/id_ed25519
-- Deployed via SCP from Rocky staging, NOT a git repo on Hetzner
+- Engram production: production (10.0.0.2:4200), SSH as deploy, key the operator-configured SSH key
+- Deployed via SCP from dev-server staging, NOT a git repo on production
 - Files at ~/engram/ on production
 - Last deployment: 2026-03-25 (GUI rebuild + nerve center API key fix)
-- Rocky (127.0.0.1) is staging/backup, NOT production
+- dev-server (10.0.0.3) is staging/backup, NOT production
 
 ## How to Deploy
-- Build/test on Rocky first
-- SCP files to production: scp -i ~/.ssh/id_ed25519 [files] deploy@10.0.0.2:~/engram/
+- Build/test on dev-server first
+- SCP files to production: scp -i the operator-configured SSH key [files] deploy@10.0.0.2:~/engram/
 - Restart process on production after deploy
 
 ## Constraints
-- SSH key: ~/.ssh/id_ed25519 (always, all servers)
+- SSH key: the operator-configured SSH key (always, all servers)
 - DO NOT reboot OVH VPS (LUKS vault locks)
 - CrowdSec everywhere, NEVER fail2ban
 - DO NOT assign passwords, ask the operator
@@ -147,9 +147,9 @@ You are working on: Deploy Engram to Hetzner
 - Query Engram before guessing at ANYTHING
 
 ## Recent Issues on Similar Tasks
-- Previous agents repeatedly SSH'd to wrong IPs (10.0.0.1, 10.0.0.1).
+- Previous agents repeatedly SSH'd to wrong IPs (10.0.0.1, 10.0.0.100).
   The correct IP is 10.0.0.2.
-- Previous agents assumed Engram is a git repo on Hetzner. It is not.
+- Previous agents assumed Engram is a git repo on the production server. It is not.
 - Previous agents didn't know how Engram starts on production. Check Engram for the start command.
 ```
 
@@ -209,8 +209,8 @@ Eidolon runs as a persistent daemon with the following components:
 - `eidolon brain` -- brain stats
 
 **Telegram bot:**
-- `/task deploy Engram to Hetzner` -- default agent
-- `/opus deploy Engram to Hetzner` -- specific model
+- `/task deploy Engram to production` -- default agent
+- `/opus deploy Engram to production` -- specific model
 - Sends progress updates as messages
 - Reply to override or provide input
 - `/status` -- active sessions
@@ -287,7 +287,7 @@ Every interaction makes Eidolon smarter:
 
 ## What Success Looks Like
 
-- You message the Telegram bot "deploy Engram to Hetzner." Agent completes it first try. No wrong IPs. No wrong paths. No confused fumbling.
+- You message the Telegram bot "deploy Engram to production." Agent completes it first try. No wrong IPs. No wrong paths. No confused fumbling.
 - A new agent session about Engram already knows the full deployment history, current state, and every mistake previous agents made.
 - You never have the same conversation twice. Eidolon remembers and teaches.
 - Agents use Soma, Chiasm, Broca without being told, because the living prompt tells them how and when.

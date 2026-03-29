@@ -24,7 +24,7 @@ pub struct BrainConfig {
 
 impl Default for BrainConfig {
     fn default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/zan".to_string());
+        let home = default_home();
         BrainConfig {
             db_path: format!("{}/engram/data/brain.db", home),
             data_dir: format!("{}/eidolon/data", home),
@@ -136,6 +136,39 @@ impl Default for AgentConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerEntry {
+    pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    pub role: String,
+    pub ssh_user: String,
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub no_reboot: bool,
+    #[serde(default)]
+    pub custom_port_required: bool,
+}
+
+fn default_ssh_port() -> u16 { 22 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SafetyConfig {
+    #[serde(default)]
+    pub rules: Vec<String>,
+    #[serde(default)]
+    pub protected_services: Vec<String>,
+}
+
+fn default_home() -> String {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/tmp".to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -147,6 +180,10 @@ pub struct Config {
     pub credd: CreddConfig,
     #[serde(default)]
     pub agents: HashMap<String, AgentConfig>,
+    #[serde(default)]
+    pub servers: Vec<ServerEntry>,
+    #[serde(default)]
+    pub safety: SafetyConfig,
     // Not stored in toml -- loaded from env var EIDOLON_API_KEY or toml [auth] section
     #[serde(skip)]
     pub api_key: String,
@@ -162,6 +199,8 @@ impl Default for Config {
             engram: EngramConfig::default(),
             credd: CreddConfig::default(),
             agents,
+            servers: Vec::new(),
+            safety: SafetyConfig::default(),
             api_key: String::new(),
         }
     }
@@ -180,6 +219,10 @@ struct RawConfig {
     #[serde(default)]
     agents: HashMap<String, AgentConfig>,
     #[serde(default)]
+    servers: Vec<ServerEntry>,
+    #[serde(default)]
+    safety: SafetyConfig,
+    #[serde(default)]
     auth: AuthConfig,
 }
 
@@ -190,7 +233,7 @@ struct AuthConfig {
 
 impl Config {
     pub fn default_path() -> String {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/zan".to_string());
+        let home = default_home();
         format!("{}/.config/eidolon/config.toml", home)
     }
 
@@ -227,6 +270,8 @@ impl Config {
                 tier3_trust_threshold: raw.credd.tier3_trust_threshold,
             },
             agents: raw.agents,
+            servers: raw.servers,
+            safety: raw.safety,
             api_key,
         })
     }

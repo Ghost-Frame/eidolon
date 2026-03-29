@@ -6,54 +6,13 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::AppState;
+use crate::config::{Config, ServerEntry};
 use crate::secrets::{self, CreddClient};
 
-// Known server mapping: IP/hostname -> (canonical name, notes)
-struct ServerInfo {
-    canonical: &'static str,
-    notes: &'static str,
-}
-
-fn server_info(host: &str) -> Option<ServerInfo> {
-    match host {
-        "10.0.0.1" | "reverse-proxy" => Some(ServerInfo {
-            canonical: "reverse-proxy (Hetzner reverse proxy)",
-            notes: "This is the Reverse-proxy reverse proxy -- NOT where Engram runs. Engram production is on production (10.0.0.2).",
-        }),
-        "10.0.0.2" | "production" => Some(ServerInfo {
-            canonical: "production (Engram production)",
-            notes: "Engram production server. SSH as deploy.",
-        }),
-        "127.0.0.1" | "10.0.0.3" | "rocky" => Some(ServerInfo {
-            canonical: "rocky (staging/backup)",
-            notes: "Local staging server. SSH as deploy.",
-        }),
-        "10.0.0.4" | "10.0.0.4" | "app-server-1" => Some(ServerInfo {
-            canonical: "app-server-1",
-            notes: "BAV services. SSH as deploy.",
-        }),
-        "10.0.0.5" | "10.0.0.5" | "edge-server-1" => Some(ServerInfo {
-            canonical: "edge-server-1",
-            notes: "BAV edge. SSH as deploy.",
-        }),
-        "10.0.0.6" | "10.0.0.6" | "coolify-host" => Some(ServerInfo {
-            canonical: "coolify-host",
-            notes: "Coolify server. SSH as root.",
-        }),
-        "10.0.0.7" | "10.0.0.7" | "app-server-2" => Some(ServerInfo {
-            canonical: "app-server-2",
-            notes: "Mindset apps. SSH as deploy.",
-        }),
-        "10.0.0.8" | "10.0.0.8" | "build-server" => Some(ServerInfo {
-            canonical: "build-server",
-            notes: "Forge. SSH as ghostframe.",
-        }),
-        "10.0.0.9" | "10.0.0.9" | "container-host" => Some(ServerInfo {
-            canonical: "container-host",
-            notes: "OVH VPS. Port 4822. DO NOT REBOOT -- LUKS vault will lock.",
-        }),
-        _ => None,
-    }
+fn find_server<'a>(host: &str, servers: &'a [ServerEntry]) -> Option<&'a ServerEntry> {
+    servers.iter().find(|s| {
+        s.name == host || s.aliases.iter().any(|a| a == host)
+    })
 }
 
 pub async fn gate_check(
@@ -135,7 +94,7 @@ pub async fn gate_check(
     }
 
     // Static dangerous pattern checks (run on resolved command)
-    if let Some(block_reason) = check_dangerous_patterns(command) {
+    if let Some(block_reason) = check_dangerous_patterns(command, &state.config) {
         tracing::warn!("gate: BLOCK tool={} reason={} session={}", tool_name, block_reason, session_id);
         return Json(json!({
             "action": "block",
@@ -178,7 +137,7 @@ pub async fn gate_check(
     }
 }
 
-fn check_dangerous_patterns(command: &str) -> Option<String> {
+fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String> {
     let cmd_lower = command.to_lowercase();
 
     // Destructive rm patterns
@@ -204,13 +163,19 @@ fn check_dangerous_patterns(command: &str) -> Option<String> {
         return Some("git reset --hard is destructive -- use git stash instead".to_string());
     }
 
-    // OVH reboot/shutdown (DO NOT REBOOT OVH -- LUKS vault will lock)
+    // Reboot/shutdown: check servers with no_reboot flag
     if cmd_lower.contains("reboot") || cmd_lower.contains("shutdown") {
-        if cmd_lower.contains("10.0.0.9") || cmd_lower.contains("4822") {
-            return Some("Reboot/shutdown of OVH VPS blocked -- LUKS vault will lock".to_string());
-        }
-        if cmd_lower.contains("ovh") {
-            return Some("Reboot/shutdown of OVH VPS blocked -- LUKS vault will lock".to_string());
+        for server in &config.servers {
+            if server.no_reboot {
+                let name_match = cmd_lower.contains(&server.name.to_lowercase());
+                let alias_match = server.aliases.iter().any(|a| cmd_lower.contains(&a.to_lowercase()));
+                if name_match || alias_match {
+                    return Some(format!(
+                        "Reboot/shutdown of {} blocked -- {}",
+                        server.name, server.notes
+                    ));
+                }
+            }
         }
     }
 
@@ -224,12 +189,17 @@ fn check_dangerous_patterns(command: &str) -> Option<String> {
         }
     }
 
-    // Stop/restart Engram production without confirmation
-    if (cmd_lower.contains("systemctl stop") || cmd_lower.contains("systemctl restart")
-        || cmd_lower.contains("podman stop") || cmd_lower.contains("docker stop"))
-        && cmd_lower.contains("engram")
-        && (cmd_lower.contains("10.0.0.2") || cmd_lower.contains("production")) {
-        return Some("Stopping/restarting Engram on production (production) requires explicit confirmation from the operator".to_string());
+    // Stop/restart protected services
+    if cmd_lower.contains("systemctl stop") || cmd_lower.contains("systemctl restart")
+        || cmd_lower.contains("podman stop") || cmd_lower.contains("docker stop") {
+        for svc in &config.safety.protected_services {
+            if cmd_lower.contains(&svc.to_lowercase()) {
+                return Some(format!(
+                    "Stopping/restarting protected service {} requires explicit confirmation",
+                    svc
+                ));
+            }
+        }
     }
 
     // Drop table / format destructors
@@ -278,40 +248,28 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
         host_raw
     };
 
-    // OVH: check port
-    if port == Some(4822) || host == "10.0.0.9" {
-        if port.is_some() && port != Some(4822) {
-            return Some(json!({
-                "action": "block",
-                "message": "OVH VPS requires port 4822. Use: ssh -i ~/.ssh/id_ed25519 -p 4822 deploy@10.0.0.9. DO NOT REBOOT -- LUKS vault will lock.",
-            }));
+    // Check against config server map (name or alias match)
+    if let Some(server) = find_server(host, &state.config.servers) {
+        // If this server requires a custom port and none (or wrong port) is provided
+        if server.custom_port_required {
+            if port.is_none() || port == Some(22) {
+                return Some(json!({
+                    "action": "enrich",
+                    "message": format!(
+                        "Server {} requires a custom SSH port ({}). Notes: {}",
+                        server.name, server.ssh_port, server.notes
+                    ),
+                }));
+            }
         }
+        let notes = if server.no_reboot {
+            format!("{} DO NOT REBOOT.", server.notes)
+        } else {
+            server.notes.clone()
+        };
         return Some(json!({
             "action": "enrich",
-            "message": "OVH VPS connection: port 4822, user deploy. DO NOT REBOOT -- LUKS vault will lock. Rootless Podman containers inside. Use SCP + podman cp, not heredoc.",
-        }));
-    }
-
-    // Reverse-proxy (10.0.0.1) -- check if this is an Engram-related command
-    if host == "10.0.0.1" || host == "reverse-proxy" {
-        let cmd_lower = command.to_lowercase();
-        if cmd_lower.contains("engram") || cmd_lower.contains("4200") || cmd_lower.contains("brain") {
-            return Some(json!({
-                "action": "block",
-                "message": "WRONG SERVER: Engram production runs on production (10.0.0.2), NOT reverse-proxy (10.0.0.1). Reverse-proxy is the reverse proxy only. Use: ssh -i ~/.ssh/id_ed25519 deploy@10.0.0.2",
-            }));
-        }
-        return Some(json!({
-            "action": "enrich",
-            "message": "Note: reverse-proxy (10.0.0.1) is the reverse proxy. If you need Engram, use production (10.0.0.2) instead.",
-        }));
-    }
-
-    // Check against known server map
-    if let Some(info) = server_info(host) {
-        return Some(json!({
-            "action": "enrich",
-            "message": format!("Server: {} -- {}", info.canonical, info.notes),
+            "message": format!("Server: {} ({}). SSH user: {}. {}", server.name, server.role, server.ssh_user, notes),
         }));
     }
 

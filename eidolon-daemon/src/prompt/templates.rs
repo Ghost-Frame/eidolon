@@ -1,4 +1,5 @@
 use crate::prompt::generator::MemorySummary;
+use crate::config::ServerEntry;
 
 fn format_memories_as_bullets(memories: &[MemorySummary]) -> String {
     if memories.is_empty() {
@@ -16,6 +17,8 @@ pub fn build_living_prompt(
     safety_memories: &[MemorySummary],
     failure_memories: &[MemorySummary],
     engram_url: &str,
+    servers: &[ServerEntry],
+    safety_rules: &[String],
 ) -> String {
     let task_context = format_memories_as_bullets(task_memories);
     let infra_context = format_memories_as_bullets(infra_memories);
@@ -24,6 +27,23 @@ pub fn build_living_prompt(
         String::new()
     } else {
         format!("\n\n## Additional Safety Rules From Engram\n{}", format_memories_as_bullets(safety_memories))
+    };
+
+    let server_table = if servers.is_empty() {
+        "No server reference configured.".to_string()
+    } else {
+        let mut table = "| Server | Role | SSH User | Notes |\n|--------|------|----------|-------|\n".to_string();
+        for s in servers {
+            table.push_str(&format!("| {} | {} | {} | {} |\n", s.name, s.role, s.ssh_user, s.notes));
+        }
+        table
+    };
+
+    let safety_section = if safety_rules.is_empty() {
+        String::new()
+    } else {
+        let rules = safety_rules.iter().map(|r| format!("- {}", r)).collect::<Vec<_>>().join("\n");
+        format!("\n## Safety Constraints\n{}\n", rules)
     };
 
     format!(
@@ -190,36 +210,13 @@ curl -sf -X DELETE {engram_url}/soma/agents/claude-code-$SESSION_ID
 | /loom/runs | GET | List runs |
 
 ---
-
-## Safety Constraints
-- DO NOT reboot OVH VPS (LUKS vault will lock)
-- SSH key: ~/.ssh/id_ed25519 for all servers
-- CrowdSec everywhere, NEVER fail2ban
-- DO NOT assign passwords -- ask the operator
-- DO NOT seed demo/production data without explicit authorization
-- OVH containers: use SCP + podman cp (never heredoc -- truncates files)
-- Restart chat-proxy on OVH: must also restart library container (stale socket)
-- git push --force to main/master is blocked
-- rm -rf on critical paths is blocked
-- Do not use em dashes in commit messages, READMEs, docs, or any public-facing content{safety_context}
-
+{safety_section}
 ## Server Reference
-| Server | IP | SSH User | Notes |
-|--------|-----|----------|-------|
-| reverse-proxy (Hetzner proxy) | 10.0.0.1 | deploy | Reverse proxy -- NOT Engram |
-| rocky | 127.0.0.1 | deploy | Staging/backup/build, local network |
-| production | 10.0.0.2 | deploy | Primary production. Engram + all Syntheos services |
-| app-server-1 | 10.0.0.4 | deploy | BAV services |
-| edge-server-1 | 10.0.0.5 | deploy | BAV edge |
-| coolify-host | 10.0.0.6 | root | Coolify |
-| app-server-2 | 10.0.0.7 | deploy | Mindset |
-| build-server | 10.0.0.8 | ghostframe | Forge |
-| container-host | 10.0.0.9 (-p 4822) | deploy | DO NOT REBOOT -- LUKS vault |
-
-**Critical:** Engram + all Syntheos services run on production (10.0.0.2), NOT on reverse-proxy.
+{server_table}
 
 ## Recent Issues From Similar Tasks
 {failure_context}
+{safety_context}
 "#,
         task = task,
         task_context = task_context,
@@ -227,5 +224,7 @@ curl -sf -X DELETE {engram_url}/soma/agents/claude-code-$SESSION_ID
         safety_context = safety_context,
         failure_context = failure_context,
         engram_url = engram_url,
+        server_table = server_table,
+        safety_section = safety_section,
     )
 }
