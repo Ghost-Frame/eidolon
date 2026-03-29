@@ -36,6 +36,7 @@ impl Default for BrainConfig {
 pub struct EngramConfig {
     pub url: String,
     pub api_key: Option<String>,
+    pub axon_url: Option<String>,
 }
 
 impl Default for EngramConfig {
@@ -43,6 +44,7 @@ impl Default for EngramConfig {
         EngramConfig {
             url: "http://localhost:4200".to_string(),
             api_key: None,
+            axon_url: None,
         }
     }
 }
@@ -52,6 +54,7 @@ struct RawEngramConfig {
     #[serde(default = "default_engram_url")]
     url: String,
     api_key: Option<String>,
+    axon_url: Option<String>,
 }
 
 fn default_engram_url() -> String {
@@ -63,6 +66,7 @@ impl Default for RawEngramConfig {
         RawEngramConfig {
             url: default_engram_url(),
             api_key: None,
+            axon_url: None,
         }
     }
 }
@@ -263,6 +267,7 @@ impl Config {
             engram: EngramConfig {
                 url: raw.engram.url,
                 api_key: engram_api_key,
+                axon_url: raw.engram.axon_url,
             },
             credd: CreddConfig {
                 url: credd_url,

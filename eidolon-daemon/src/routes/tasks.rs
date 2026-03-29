@@ -58,6 +58,30 @@ pub async fn submit_task(
         sessions.create_session(req.task.clone(), agent_name.clone(), model.clone())
     };
 
+    // Auto-register agent with Axon on spawn
+    {
+        let axon_url = state.config.engram.axon_url.clone()
+            .unwrap_or_else(|| format!("{}/axon/publish", state.config.engram.url));
+        let axon_key = state.config.engram.api_key.clone().unwrap_or_default();
+        let agent_name_axon = agent_name.clone();
+        let sid_axon = session_id.clone();
+        let http = state.http_client.clone();
+        tokio::spawn(async move {
+            let _ = http
+                .post(&axon_url)
+                .header("Authorization", format!("Bearer {}", axon_key))
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({
+                    "type": "agent.online",
+                    "channel": "system",
+                    "source": agent_name_axon,
+                    "payload": { "session_id": sid_axon }
+                }))
+                .send()
+                .await;
+        });
+    }
+
     // Spawn agent in background
     let state_clone = Arc::clone(&state);
     let sid = session_id.clone();
