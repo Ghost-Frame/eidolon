@@ -9,6 +9,8 @@ pub struct ChatMessage {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatCompletionRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub messages: Vec<ChatMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
@@ -147,6 +149,7 @@ impl LlmClient {
         grammar: Option<&str>,
     ) -> ChatCompletionRequest {
         ChatCompletionRequest {
+            model: None,
             messages: messages
                 .iter()
                 .map(|(role, content)| ChatMessage {
@@ -159,5 +162,17 @@ impl LlmClient {
             grammar: grammar.map(|g| g.to_string()),
             stream: false,
         }
+    }
+
+    /// Build request with explicit model name (required for Ollama).
+    pub fn build_request_with_model(
+        model: &str,
+        messages: &[(&str, &str)],
+        temperature: f32,
+        grammar: Option<&str>,
+    ) -> ChatCompletionRequest {
+        let mut req = Self::build_request(messages, temperature, grammar);
+        req.model = Some(model.to_string());
+        req
     }
 }

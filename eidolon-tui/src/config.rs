@@ -17,6 +17,7 @@ pub struct Config {
 #[serde(default)]
 pub struct LlmConfig {
     pub model_path: String,
+    pub model_name: String,
     pub context_length: u32,
     pub port: u16,
     pub gpu_layers: u32,
@@ -96,6 +97,7 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             model_path: String::new(),
+            model_name: "qwen3:14b".to_string(),
             context_length: 8192,
             port: 8080,
             gpu_layers: 99,
