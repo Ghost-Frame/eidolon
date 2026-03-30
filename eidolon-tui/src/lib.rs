@@ -3,3 +3,4 @@ pub mod tui;
 pub mod llm;
 pub mod conversation;
 pub mod syntheos;
+pub mod agents;
