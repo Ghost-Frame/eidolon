@@ -22,7 +22,7 @@ pub struct Theme {
     pub pulse_end: Color,
 }
 
-const THEMES: &[Theme] = &[
+pub const THEMES: &[Theme] = &[
     Theme {
         name: "jujutsu",
         accent: Color::Rgb(124, 58, 237),
