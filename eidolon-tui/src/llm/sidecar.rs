@@ -14,17 +14,19 @@ pub struct LlamaSidecar {
     process: Option<Child>,
     port: u16,
     model_path: String,
+    server_path: String,
     context_length: u32,
     gpu_layers: u32,
     status: SidecarStatus,
 }
 
 impl LlamaSidecar {
-    pub fn new(model_path: &str, port: u16, context_length: u32, gpu_layers: u32) -> Self {
+    pub fn new(server_path: &str, model_path: &str, port: u16, context_length: u32, gpu_layers: u32) -> Self {
         Self {
             process: None,
             port,
             model_path: model_path.to_string(),
+            server_path: server_path.to_string(),
             context_length,
             gpu_layers,
             status: SidecarStatus::Stopped,
@@ -50,7 +52,7 @@ impl LlamaSidecar {
 
         self.status = SidecarStatus::Starting;
 
-        let child = Command::new("llama-server")
+        let child = Command::new(&self.server_path)
             .args([
                 "-m", &self.model_path,
                 "-c", &self.context_length.to_string(),

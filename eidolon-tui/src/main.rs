@@ -41,12 +41,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn sidecar only if model_path is set and no remote base_url configured
     let _sidecar_handle = if app.config.llm.base_url.is_none() && !app.config.llm.model_path.is_empty() {
+        let server_path = app.config.llm.server_path.clone();
         let model_path = app.config.llm.model_path.clone();
         let port = app.config.llm.port;
         let ctx = app.config.llm.context_length;
         let ngl = app.config.llm.gpu_layers;
         Some(tokio::spawn(async move {
-            let mut sidecar = LlamaSidecar::new(&model_path, port, ctx, ngl);
+            let mut sidecar = LlamaSidecar::new(&server_path, &model_path, port, ctx, ngl);
             let _ = sidecar.start().await;
             sidecar
         }))
@@ -161,6 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let client = llm_client.clone();
                                     let sys = system_prompt.clone();
                                     let temperature = app.config.llm.temperature_casual;
+                                    let model_name = app.config.llm.model_name.clone();
 
                                     tokio::spawn(async move {
                                         // Build messages: system + history
@@ -173,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             .map(|(r, c)| (*r, c.as_str()))
                                             .collect();
 
-                                        let request = LlmClient::build_request(&msg_refs, temperature, None);
+                                        let request = LlmClient::build_request_with_model(&model_name, &msg_refs, temperature, None);
                                         let _ = client.stream_complete(&request, tx).await;
                                     });
                                 }
