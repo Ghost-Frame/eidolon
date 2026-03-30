@@ -3,6 +3,10 @@ name = "eidolon-tui"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "eidolon_tui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "eidolon-tui"
 path = "src/main.rs"
