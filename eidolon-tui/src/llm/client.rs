@@ -67,9 +67,9 @@ pub struct LlmClient {
 }
 
 impl LlmClient {
-    pub fn new(port: u16) -> Self {
+    pub fn new(base_url: &str) -> Self {
         Self {
-            base_url: format!("http://localhost:{}", port),
+            base_url: base_url.trim_end_matches('/').to_string(),
             http: reqwest::Client::new(),
         }
     }

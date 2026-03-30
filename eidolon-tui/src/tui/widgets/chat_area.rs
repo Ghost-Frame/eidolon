@@ -7,6 +7,7 @@ use ratatui::{
 };
 use crate::tui::theme::Theme;
 
+#[derive(Clone)]
 pub struct ChatMessage {
     pub sender: String,
     pub content: String,

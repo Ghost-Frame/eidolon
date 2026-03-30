@@ -23,6 +23,9 @@ pub struct App {
     pub scroll_offset: u16,
     pub agent_outputs: std::collections::HashMap<String, Vec<String>>,
     pub context_tokens: u32,
+    pub token_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
+    pub pending_response: String,
+    pub sidecar_status: SidecarStatus,
 }
 
 impl App {
@@ -48,6 +51,9 @@ impl App {
             scroll_offset: 0,
             agent_outputs: std::collections::HashMap::new(),
             context_tokens: 0,
+            token_rx: None,
+            pending_response: String::new(),
+            sidecar_status: SidecarStatus::Stopped,
         }
     }
 
@@ -110,6 +116,21 @@ impl App {
     }
 
     pub fn llm_status(&self) -> SidecarStatus {
-        SidecarStatus::Stopped
+        self.sidecar_status.clone()
+    }
+
+    pub fn start_streaming(&mut self, rx: tokio::sync::mpsc::UnboundedReceiver<String>) {
+        self.pending_response.clear();
+        self.token_rx = Some(rx);
+        self.mode = AppMode::Generating;
+    }
+
+    pub fn commit_pending_response(&mut self) {
+        if !self.pending_response.is_empty() {
+            self.add_gojo_message(&self.pending_response.clone());
+            self.pending_response.clear();
+        }
+        self.token_rx = None;
+        self.mode = AppMode::Normal;
     }
 }

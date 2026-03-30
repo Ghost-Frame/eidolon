@@ -22,6 +22,7 @@ pub struct LlmConfig {
     pub gpu_layers: u32,
     pub temperature_casual: f32,
     pub temperature_routing: f32,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,6 +101,7 @@ impl Default for LlmConfig {
             gpu_layers: 99,
             temperature_casual: 0.7,
             temperature_routing: 0.3,
+            base_url: None,
         }
     }
 }
