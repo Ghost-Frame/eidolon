@@ -1,5 +1,5 @@
 [workspace]
-members = ["eidolon-lib", "eidolon", "eidolon-daemon", "eidolon-cli"]
+members = ["eidolon-lib", "eidolon", "eidolon-daemon", "eidolon-cli", "eidolon-tui"]
 resolver = "2"
 
 [profile.release]
