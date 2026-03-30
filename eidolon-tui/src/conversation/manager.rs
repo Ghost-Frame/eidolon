@@ -109,7 +109,8 @@ impl ConversationManager {
             .filter(|m| m.role == Role::User)
             .map(|m| {
                 if m.content.len() > 80 {
-                    format!("- {}...", &m.content[..77])
+                    let truncated: String = m.content.chars().take(77).collect();
+                    format!("- {}...", truncated)
                 } else {
                     format!("- {}", m.content)
                 }

@@ -158,7 +158,8 @@ All services at $ENGRAM_URL with Bearer $ENGRAM_API_KEY:
 
     fn format_graph(raw: &str) -> String {
         if raw.len() > 500 {
-            format!("{}... (truncated)", &raw[..497])
+            let truncated: String = raw.chars().take(497).collect();
+            format!("{}... (truncated)", truncated)
         } else {
             raw.to_string()
         }

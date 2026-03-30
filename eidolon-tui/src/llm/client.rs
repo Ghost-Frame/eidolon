@@ -110,7 +110,7 @@ impl LlmClient {
         use futures::StreamExt;
         let mut buffer = String::new();
 
-        while let Some(chunk_result) = stream.next().await {
+        'stream: while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             let text = String::from_utf8_lossy(chunk.as_ref());
             buffer.push_str(&text);
@@ -123,7 +123,7 @@ impl LlmClient {
                 if line.starts_with("data: ") {
                     let data = &line[6..];
                     if data == "[DONE]" {
-                        break;
+                        break 'stream;
                     }
                     if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
                         for choice in &chunk.choices {

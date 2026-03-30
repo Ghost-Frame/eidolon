@@ -4,9 +4,9 @@ fn test_intent_grammar_is_valid_gbnf() {
     assert!(!grammar.is_empty());
     assert!(grammar.contains("root ::="));
     assert!(grammar.contains("intent"));
-    assert!(grammar.contains("\"casual\""));
-    assert!(grammar.contains("\"memory\""));
-    assert!(grammar.contains("\"action\""));
+    assert!(grammar.contains("\\\"casual\\\""));
+    assert!(grammar.contains("\\\"memory\\\""));
+    assert!(grammar.contains("\\\"action\\\""));
 }
 
 #[test]

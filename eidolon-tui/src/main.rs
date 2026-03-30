@@ -19,6 +19,12 @@ use app::{App, AppMode};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load().unwrap_or_default();
 
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = terminal::restore();
+        default_hook(info);
+    }));
+
     let mut tui = terminal::init()?;
     let mut app = App::new(config);
 

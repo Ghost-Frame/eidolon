@@ -29,8 +29,6 @@ impl App {
     pub fn new(config: Config) -> Self {
         let theme_name = config.tui.theme.clone();
         let theme = Theme::by_name(&theme_name).unwrap_or(&eidolon_tui::tui::theme::THEMES[0]);
-        // THEMES is a static array, so references from by_name() are 'static
-        let theme: &'static Theme = unsafe { &*(theme as *const Theme) };
 
         let animation = AnimationState::new(config.tui.animations, config.tui.fps);
 
@@ -56,20 +54,27 @@ impl App {
     pub fn cycle_theme(&mut self) {
         let next_name = Theme::cycle_next(self.theme.name);
         if let Some(next) = Theme::by_name(next_name) {
-            let next: &'static Theme = unsafe { &*(next as *const Theme) };
             self.theme = next;
         }
     }
 
     pub fn handle_input_char(&mut self, c: char) {
-        self.input.insert(self.cursor_pos, c);
+        let byte_pos = self.input.char_indices()
+            .nth(self.cursor_pos)
+            .map(|(i, _)| i)
+            .unwrap_or(self.input.len());
+        self.input.insert(byte_pos, c);
         self.cursor_pos += 1;
     }
 
     pub fn handle_backspace(&mut self) {
         if self.cursor_pos > 0 {
             self.cursor_pos -= 1;
-            self.input.remove(self.cursor_pos);
+            let byte_pos = self.input.char_indices()
+                .nth(self.cursor_pos)
+                .map(|(i, _)| i)
+                .unwrap_or(self.input.len());
+            self.input.remove(byte_pos);
         }
     }
 
