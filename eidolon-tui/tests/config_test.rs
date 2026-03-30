@@ -1,0 +1,50 @@
+use std::io::Write;
+use tempfile::NamedTempFile;
+
+#[test]
+fn test_config_defaults() {
+    let config = eidolon_tui::config::Config::default();
+    assert_eq!(config.llm.port, 8080);
+    assert_eq!(config.llm.context_length, 8192);
+    assert_eq!(config.llm.gpu_layers, 99);
+    assert_eq!(config.tui.theme, "jujutsu");
+    assert_eq!(config.tui.fps, 30);
+    assert!(config.tui.animations);
+    assert!(config.session.auto_store_to_engram);
+}
+
+#[test]
+fn test_config_from_toml() {
+    let toml_str = r#"
+[llm]
+model_path = "C:/models/test.gguf"
+port = 9090
+context_length = 16384
+
+[tui]
+theme = "cyberpunk"
+fps = 60
+
+[engram]
+url = "http://localhost:4200"
+api_key = "test-key"
+"#;
+
+    let config = eidolon_tui::config::Config::from_str(toml_str).unwrap();
+    assert_eq!(config.llm.port, 9090);
+    assert_eq!(config.llm.context_length, 16384);
+    assert_eq!(config.tui.theme, "cyberpunk");
+    assert_eq!(config.tui.fps, 60);
+    assert_eq!(config.engram.url, "http://localhost:4200");
+}
+
+#[test]
+fn test_config_partial_override() {
+    let toml_str = r#"
+[llm]
+model_path = "C:/models/test.gguf"
+"#;
+    let config = eidolon_tui::config::Config::from_str(toml_str).unwrap();
+    assert_eq!(config.llm.port, 8080);
+    assert_eq!(config.tui.theme, "jujutsu");
+}

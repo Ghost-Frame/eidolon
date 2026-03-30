@@ -1,0 +1,163 @@
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatCompletionRequest {
+    pub messages: Vec<ChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grammar: Option<String>,
+    pub stream: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatCompletionResponse {
+    pub choices: Vec<Choice>,
+    pub usage: Option<Usage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Choice {
+    pub message: ResponseMessage,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResponseMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
+/// Streaming delta from SSE
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamChunk {
+    pub choices: Vec<StreamChoice>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamChoice {
+    pub delta: StreamDelta,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamDelta {
+    pub content: Option<String>,
+}
+
+pub struct LlmClient {
+    base_url: String,
+    http: reqwest::Client,
+}
+
+impl LlmClient {
+    pub fn new(port: u16) -> Self {
+        Self {
+            base_url: format!("http://localhost:{}", port),
+            http: reqwest::Client::new(),
+        }
+    }
+
+    /// Non-streaming completion. Used for structured output (routing, tool calls).
+    pub async fn complete(&self, request: &ChatCompletionRequest) -> Result<ChatCompletionResponse, reqwest::Error> {
+        let mut req = request.clone();
+        req.stream = false;
+
+        self.http
+            .post(format!("{}/v1/chat/completions", self.base_url))
+            .json(&req)
+            .send()
+            .await?
+            .json()
+            .await
+    }
+
+    /// Streaming completion. Sends text deltas through the channel.
+    /// Returns the full accumulated response text when done.
+    pub async fn stream_complete(
+        &self,
+        request: &ChatCompletionRequest,
+        tx: mpsc::UnboundedSender<String>,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let mut req = request.clone();
+        req.stream = true;
+
+        let response = self.http
+            .post(format!("{}/v1/chat/completions", self.base_url))
+            .json(&req)
+            .send()
+            .await?;
+
+        let mut accumulated = String::new();
+        let mut stream = response.bytes_stream();
+
+        use futures::StreamExt;
+        let mut buffer = String::new();
+
+        'stream: while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result?;
+            let text = String::from_utf8_lossy(chunk.as_ref());
+            buffer.push_str(&text);
+
+            // Process complete SSE lines
+            while let Some(line_end) = buffer.find('\n') {
+                let line = buffer[..line_end].trim().to_string();
+                buffer = buffer[line_end + 1..].to_string();
+
+                if line.starts_with("data: ") {
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        break 'stream;
+                    }
+                    if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                        for choice in &chunk.choices {
+                            if let Some(content) = &choice.delta.content {
+                                accumulated.push_str(content);
+                                let _ = tx.send(content.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(accumulated)
+    }
+
+    /// Build a chat completion request from conversation messages.
+    pub fn build_request(
+        messages: &[(&str, &str)],
+        temperature: f32,
+        grammar: Option<&str>,
+    ) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            messages: messages
+                .iter()
+                .map(|(role, content)| ChatMessage {
+                    role: role.to_string(),
+                    content: content.to_string(),
+                })
+                .collect(),
+            temperature: Some(temperature),
+            max_tokens: Some(2048),
+            grammar: grammar.map(|g| g.to_string()),
+            stream: false,
+        }
+    }
+}

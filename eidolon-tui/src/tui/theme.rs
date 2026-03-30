@@ -1,0 +1,188 @@
+use ratatui::style::Color;
+
+#[derive(Debug, Clone)]
+pub struct Theme {
+    pub name: &'static str,
+    pub accent: Color,
+    pub accent_hover: Color,
+    pub dim: Color,
+    pub text: Color,
+    pub text_secondary: Color,
+    pub bg: Color,
+    pub bg_secondary: Color,
+    pub error: Color,
+    pub success: Color,
+    pub warning: Color,
+    pub tool_call: Color,
+    pub thinking: Color,
+    pub gojo_text: Color,
+    pub user_text: Color,
+    pub agent_border: Color,
+    pub pulse_start: Color,
+    pub pulse_end: Color,
+}
+
+pub const THEMES: &[Theme] = &[
+    Theme {
+        name: "jujutsu",
+        accent: Color::Rgb(124, 58, 237),
+        accent_hover: Color::Rgb(167, 139, 250),
+        dim: Color::Rgb(75, 85, 99),
+        text: Color::Rgb(243, 244, 246),
+        text_secondary: Color::Rgb(156, 163, 175),
+        bg: Color::Rgb(8, 9, 12),
+        bg_secondary: Color::Rgb(17, 18, 24),
+        error: Color::Rgb(239, 68, 68),
+        success: Color::Rgb(34, 197, 94),
+        warning: Color::Rgb(234, 179, 8),
+        tool_call: Color::Rgb(96, 165, 250),
+        thinking: Color::Rgb(167, 139, 250),
+        gojo_text: Color::Rgb(192, 132, 252),
+        user_text: Color::Rgb(243, 244, 246),
+        agent_border: Color::Rgb(124, 58, 237),
+        pulse_start: Color::Rgb(124, 58, 237),
+        pulse_end: Color::Rgb(75, 85, 99),
+    },
+    Theme {
+        name: "limitless",
+        accent: Color::Rgb(56, 189, 248),
+        accent_hover: Color::Rgb(125, 211, 252),
+        dim: Color::Rgb(100, 116, 139),
+        text: Color::Rgb(248, 250, 252),
+        text_secondary: Color::Rgb(148, 163, 184),
+        bg: Color::Rgb(0, 0, 0),
+        bg_secondary: Color::Rgb(15, 23, 42),
+        error: Color::Rgb(248, 113, 113),
+        success: Color::Rgb(74, 222, 128),
+        warning: Color::Rgb(250, 204, 21),
+        tool_call: Color::Rgb(56, 189, 248),
+        thinking: Color::Rgb(125, 211, 252),
+        gojo_text: Color::Rgb(56, 189, 248),
+        user_text: Color::Rgb(248, 250, 252),
+        agent_border: Color::Rgb(56, 189, 248),
+        pulse_start: Color::Rgb(56, 189, 248),
+        pulse_end: Color::Rgb(15, 23, 42),
+    },
+    Theme {
+        name: "cyberpunk",
+        accent: Color::Rgb(0, 240, 255),
+        accent_hover: Color::Rgb(57, 255, 20),
+        dim: Color::Rgb(75, 85, 99),
+        text: Color::Rgb(240, 240, 245),
+        text_secondary: Color::Rgb(148, 163, 184),
+        bg: Color::Rgb(10, 14, 23),
+        bg_secondary: Color::Rgb(15, 20, 30),
+        error: Color::Rgb(255, 45, 170),
+        success: Color::Rgb(57, 255, 20),
+        warning: Color::Rgb(255, 170, 0),
+        tool_call: Color::Rgb(0, 240, 255),
+        thinking: Color::Rgb(180, 77, 255),
+        gojo_text: Color::Rgb(0, 240, 255),
+        user_text: Color::Rgb(57, 255, 20),
+        agent_border: Color::Rgb(180, 77, 255),
+        pulse_start: Color::Rgb(0, 240, 255),
+        pulse_end: Color::Rgb(180, 77, 255),
+    },
+    Theme {
+        name: "hollow",
+        accent: Color::Rgb(255, 51, 68),
+        accent_hover: Color::Rgb(255, 100, 100),
+        dim: Color::Rgb(82, 82, 82),
+        text: Color::Rgb(229, 229, 229),
+        text_secondary: Color::Rgb(163, 163, 163),
+        bg: Color::Rgb(12, 12, 12),
+        bg_secondary: Color::Rgb(23, 23, 23),
+        error: Color::Rgb(255, 51, 68),
+        success: Color::Rgb(34, 197, 94),
+        warning: Color::Rgb(245, 158, 11),
+        tool_call: Color::Rgb(245, 158, 11),
+        thinking: Color::Rgb(255, 100, 100),
+        gojo_text: Color::Rgb(255, 51, 68),
+        user_text: Color::Rgb(229, 229, 229),
+        agent_border: Color::Rgb(255, 51, 68),
+        pulse_start: Color::Rgb(255, 51, 68),
+        pulse_end: Color::Rgb(82, 82, 82),
+    },
+    Theme {
+        name: "synapse",
+        accent: Color::Rgb(255, 170, 0),
+        accent_hover: Color::Rgb(255, 200, 60),
+        dim: Color::Rgb(100, 100, 90),
+        text: Color::Rgb(235, 230, 220),
+        text_secondary: Color::Rgb(170, 165, 155),
+        bg: Color::Rgb(8, 9, 12),
+        bg_secondary: Color::Rgb(18, 19, 24),
+        error: Color::Rgb(239, 68, 68),
+        success: Color::Rgb(34, 197, 94),
+        warning: Color::Rgb(255, 170, 0),
+        tool_call: Color::Rgb(255, 200, 60),
+        thinking: Color::Rgb(255, 170, 0),
+        gojo_text: Color::Rgb(255, 170, 0),
+        user_text: Color::Rgb(235, 230, 220),
+        agent_border: Color::Rgb(255, 170, 0),
+        pulse_start: Color::Rgb(255, 170, 0),
+        pulse_end: Color::Rgb(100, 100, 90),
+    },
+    Theme {
+        name: "tokyo",
+        accent: Color::Rgb(122, 162, 247),
+        accent_hover: Color::Rgb(157, 188, 255),
+        dim: Color::Rgb(68, 75, 106),
+        text: Color::Rgb(192, 202, 245),
+        text_secondary: Color::Rgb(134, 144, 183),
+        bg: Color::Rgb(26, 27, 38),
+        bg_secondary: Color::Rgb(36, 40, 59),
+        error: Color::Rgb(247, 118, 142),
+        success: Color::Rgb(115, 218, 202),
+        warning: Color::Rgb(224, 175, 104),
+        tool_call: Color::Rgb(125, 207, 255),
+        thinking: Color::Rgb(187, 154, 247),
+        gojo_text: Color::Rgb(122, 162, 247),
+        user_text: Color::Rgb(192, 202, 245),
+        agent_border: Color::Rgb(122, 162, 247),
+        pulse_start: Color::Rgb(122, 162, 247),
+        pulse_end: Color::Rgb(68, 75, 106),
+    },
+    Theme {
+        name: "minimal",
+        accent: Color::Rgb(136, 136, 136),
+        accent_hover: Color::Rgb(170, 170, 170),
+        dim: Color::Rgb(68, 68, 68),
+        text: Color::Rgb(204, 204, 204),
+        text_secondary: Color::Rgb(136, 136, 136),
+        bg: Color::Rgb(0, 0, 0),
+        bg_secondary: Color::Rgb(20, 20, 20),
+        error: Color::Rgb(255, 100, 100),
+        success: Color::Rgb(100, 200, 100),
+        warning: Color::Rgb(200, 180, 80),
+        tool_call: Color::Rgb(136, 136, 136),
+        thinking: Color::Rgb(170, 170, 170),
+        gojo_text: Color::Rgb(204, 204, 204),
+        user_text: Color::Rgb(204, 204, 204),
+        agent_border: Color::Rgb(136, 136, 136),
+        pulse_start: Color::Rgb(136, 136, 136),
+        pulse_end: Color::Rgb(68, 68, 68),
+    },
+];
+
+impl Theme {
+    pub fn available_names() -> Vec<&'static str> {
+        THEMES.iter().map(|t| t.name).collect()
+    }
+
+    pub fn by_name(name: &str) -> Option<&'static Theme> {
+        THEMES.iter().find(|t| t.name == name)
+    }
+
+    pub fn cycle_next(current: &str) -> &'static str {
+        let idx = THEMES.iter().position(|t| t.name == current).unwrap_or(0);
+        let next = (idx + 1) % THEMES.len();
+        THEMES[next].name
+    }
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        THEMES[0].clone()
+    }
+}
