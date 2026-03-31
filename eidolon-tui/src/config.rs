@@ -54,6 +54,9 @@ pub struct AgentEntry {
     pub command: String,
     pub args: Vec<String>,
     pub default_model: String,
+    pub model_light: String,
+    pub model_medium: String,
+    pub model_heavy: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,13 +136,19 @@ impl Default for AgentsConfig {
         Self {
             claude: AgentEntry {
                 command: "claude".to_string(),
-                args: vec!["-p".to_string(), "--output-format".to_string(), "stream-json".to_string(), "--verbose".to_string()],
+                args: vec!["-p".to_string()],
                 default_model: "opus".to_string(),
+                model_light: "claude-haiku-4-5-20251001".to_string(),
+                model_medium: "claude-sonnet-4-6".to_string(),
+                model_heavy: "claude-opus-4-6".to_string(),
             },
             codex: AgentEntry {
                 command: "codex".to_string(),
-                args: vec![],
-                default_model: String::new(),
+                args: vec!["-q".to_string()],
+                default_model: "gpt-5.4-mini".to_string(),
+                model_light: "gpt-5.1-codex-mini".to_string(),
+                model_medium: "gpt-5.4-mini".to_string(),
+                model_heavy: "gpt-5.4".to_string(),
             },
         }
     }

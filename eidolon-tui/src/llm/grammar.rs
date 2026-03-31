@@ -2,8 +2,9 @@
 /// routing JSON with intent classification, confidence, tool list, and agent selection.
 pub fn intent_routing_grammar() -> String {
     let s = [
-        r#"root ::= "{" ws "\"intent\":" ws intent "," ws "\"confidence\":" ws number "," ws "\"tools_needed\":" ws tools "," ws "\"agent_needed\":" ws agent "," ws "\"reasoning\":" ws string "}" ws"#,
+        r#"root ::= "{" ws "\"intent\":" ws intent "," ws "\"confidence\":" ws number "," ws "\"complexity\":" ws complexity "," ws "\"tools_needed\":" ws tools "," ws "\"agent_needed\":" ws agent "," ws "\"reasoning\":" ws string "}" ws"#,
         r#"intent ::= "\"casual\"" | "\"memory\"" | "\"action\"""#,
+        r#"complexity ::= "\"light\"" | "\"medium\"" | "\"heavy\"""#,
         r#"agent ::= "\"null\"" | "\"claude\"" | "\"codex\"""#,
         r#"tools ::= "[" ws (string ("," ws string)*)? "]""#,
         r#"number ::= [0-9] "." [0-9] [0-9]?"#,

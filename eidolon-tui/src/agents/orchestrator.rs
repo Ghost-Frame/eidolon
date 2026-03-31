@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 pub enum AgentType {
     Claude { model: String },
-    Codex,
+    Codex { model: String },
 }
 
 pub struct ActiveSession {
@@ -65,16 +65,16 @@ impl AgentOrchestrator {
                     output_rx: rx,
                 })
             }
-            AgentType::Codex => {
+            AgentType::Codex { model } => {
                 let dir = working_dir.unwrap_or_else(|| PathBuf::from("."));
-                let mut session = CodexSession::new(&session_id, task, dir);
+                let mut session = CodexSession::new(&session_id, task, &model, dir);
                 session.spawn(&self.config.codex.command, &self.config.codex.args, tx).await?;
-
+                let agent_type_str = format!("codex-{}", model);
                 self.codex_sessions.insert(session_id.clone(), session);
 
                 Ok(ActiveSession {
                     id: session_id,
-                    agent_type: "codex".to_string(),
+                    agent_type: agent_type_str,
                     task: task.to_string(),
                     started_at: chrono::Utc::now(),
                     output_rx: rx,

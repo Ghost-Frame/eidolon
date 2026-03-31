@@ -12,8 +12,8 @@ use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-use crate::AppState;
 use crate::routes::{brain, gate, sessions, tasks};
+use crate::AppState;
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({
@@ -47,7 +47,8 @@ async fn auth_middleware(
         // Non-local gate requests fall through to normal auth below
     }
 
-    let auth_header = req.headers()
+    let auth_header = req
+        .headers()
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
@@ -72,16 +73,16 @@ async fn auth_middleware(
 /// Constant-time byte comparison using SHA-256 digests.
 /// Hashing both inputs to a fixed-length output prevents length-leaking
 /// side-channels present in naive early-exit comparisons.
+/// black_box fences prevent the compiler from optimizing the XOR loop
+/// into an early-exit branch.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let ha = Sha256::digest(a);
     let hb = Sha256::digest(b);
-    // Compare 32-byte digests without early exit
     let mut result: u8 = 0;
     for (x, y) in ha.iter().zip(hb.iter()) {
         result |= x ^ y;
     }
-    // Length check performed after the constant-time digest comparison
-    result == 0 && a.len() == b.len()
+    std::hint::black_box(result) == 0 && a.len() == b.len()
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {

@@ -3,11 +3,17 @@ use eidolon_tui::llm::sidecar::SidecarStatus;
 use eidolon_tui::tui::theme::Theme;
 use eidolon_tui::tui::animation::AnimationState;
 use eidolon_tui::tui::widgets::chat_area::ChatMessage;
+use eidolon_tui::conversation::router::RoutingDecision;
+use eidolon_tui::dataset::collector::{DatasetCollector, TrainingExample};
+use tokio::sync::oneshot;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppMode {
     Normal,
+    Routing,
     Generating,
+    AwaitingConfirmation,
     AgentActive { session_id: String },
 }
 
@@ -26,14 +32,28 @@ pub struct App {
     pub token_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     pub pending_response: String,
     pub sidecar_status: SidecarStatus,
+
+    // Conductor state
+    pub routing_rx: Option<oneshot::Receiver<Result<RoutingDecision, String>>>,
+    pub pending_decision: Option<RoutingDecision>,
+    pub pending_user_message: String,
+    pub stream_abort: Option<tokio::task::AbortHandle>,
+    pub collector: DatasetCollector,
+    pub system_prompt: String,
 }
 
 impl App {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, system_prompt: String) -> Self {
         let theme_name = config.tui.theme.clone();
         let theme = Theme::by_name(&theme_name).unwrap_or(&eidolon_tui::tui::theme::THEMES[0]);
-
         let animation = AnimationState::new(config.tui.animations, config.tui.fps);
+
+        let dataset_path = dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("eidolon")
+            .join("training.jsonl");
+
+        let collector = DatasetCollector::new(dataset_path);
 
         Self {
             config,
@@ -54,6 +74,12 @@ impl App {
             token_rx: None,
             pending_response: String::new(),
             sidecar_status: SidecarStatus::Stopped,
+            routing_rx: None,
+            pending_decision: None,
+            pending_user_message: String::new(),
+            stream_abort: None,
+            collector,
+            system_prompt,
         }
     }
 
@@ -127,8 +153,34 @@ impl App {
 
     pub fn commit_pending_response(&mut self) {
         if !self.pending_response.is_empty() {
-            self.add_gojo_message(&self.pending_response.clone());
+            let response = self.pending_response.clone();
+
+            // Record to dataset
+            if !self.pending_user_message.is_empty() {
+                let intent = match &self.pending_decision {
+                    Some(d) => format!("{:?}", d.intent).to_lowercase(),
+                    None => "casual".to_string(),
+                };
+                let tools_called = self.pending_decision.as_ref()
+                    .map(|d| d.tools_needed.clone())
+                    .unwrap_or_default();
+
+                let example = TrainingExample {
+                    system_prompt: self.system_prompt.clone(),
+                    user_message: self.pending_user_message.clone(),
+                    assistant_response: response.clone(),
+                    intent,
+                    tools_called,
+                    user_override: false,
+                };
+                let _ = self.collector.record(example);
+                let _ = self.collector.flush();
+            }
+
+            self.add_gojo_message(&response);
             self.pending_response.clear();
+            self.pending_decision = None;
+            self.pending_user_message.clear();
         }
         self.token_rx = None;
         self.mode = AppMode::Normal;
