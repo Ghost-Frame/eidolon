@@ -43,7 +43,8 @@ impl CreddClient {
 
     pub async fn fetch(&self, svc: &str, key: &str) -> Result<Value, String> {
         let url = format!("{}/secret/{}/{}", self.base_url, svc, key);
-        let resp = self.http
+        let resp = self
+            .http
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.agent_key))
             .timeout(std::time::Duration::from_secs(5))
@@ -63,7 +64,8 @@ impl CreddClient {
     /// Extract a specific field from a typed secret response.
     /// credd v3 returns: {"type": "ApiKey", "value": {"type": "api_key", "key": "..."}}
     pub fn extract_field(secret: &Value, field: &str) -> Result<String, String> {
-        let val = secret.get("value")
+        let val = secret
+            .get("value")
             .ok_or_else(|| "secret has no 'value' field".to_string())?;
 
         val.get(field)
@@ -76,19 +78,20 @@ impl CreddClient {
     /// ApiKey: {"type": "ApiKey", "value": {"type": "api_key", "key": "..."}}
     /// Note: {"type": "Note", "value": {"type": "note", "content": "..."}}
     pub fn extract_bare(secret: &Value) -> Result<String, String> {
-        let secret_type = secret.get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let secret_type = secret.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
-        let val = secret.get("value")
+        let val = secret
+            .get("value")
             .ok_or_else(|| "secret has no 'value' field".to_string())?;
 
         match secret_type {
-            "ApiKey" => val.get("key")
+            "ApiKey" => val
+                .get("key")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .ok_or_else(|| "ApiKey missing 'key' field".to_string()),
-            "Note" => val.get("content")
+            "Note" => val
+                .get("content")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .ok_or_else(|| "Note missing 'content' field".to_string()),
@@ -101,20 +104,23 @@ impl CreddClient {
 
     /// For Environment type, build an export block from all key-value pairs.
     pub fn extract_env_export_block(secret: &Value) -> Result<String, String> {
-        let secret_type = secret.get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let secret_type = secret.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         if secret_type != "Environment" {
-            return Err(format!("env export block only valid for Environment type, got '{}'", secret_type));
+            return Err(format!(
+                "env export block only valid for Environment type, got '{}'",
+                secret_type
+            ));
         }
 
-        let val = secret.get("value")
+        let val = secret
+            .get("value")
             .and_then(|v| v.as_object())
             .ok_or_else(|| "Environment secret has no value object".to_string())?;
 
         // Filter out the serde tag field "type" from the export block
-        let exports: Vec<String> = val.iter()
+        let exports: Vec<String> = val
+            .iter()
             .filter(|(k, _)| k.as_str() != "type")
             .filter_map(|(k, v)| {
                 v.as_str().map(|val| {
@@ -171,9 +177,9 @@ pub async fn resolve_secrets(
 /// Trust evaluation seam. Static threshold now, session-decay later.
 #[allow(unused_variables)]
 pub fn evaluate_trust(session_id: &str) -> u8 {
-    // Phase 1: static value
+    // Phase 1: deny by default (0) -- tier-3 secrets require real session tracking
     // Phase 2: track session age, tool call count, gate block count -> decay score
-    80
+    0
 }
 
 /// Recursively walk a JSON value, replacing secret patterns in strings.
@@ -282,10 +288,7 @@ async fn resolve_string(
                         CreddClient::extract_field(&secret, f)
                     } else if tool_name == "Bash" {
                         // Tier 2: bare reference in Bash for Environment type
-                        let secret_type = secret
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                        let secret_type = secret.get("type").and_then(|v| v.as_str()).unwrap_or("");
                         if secret_type == "Environment" {
                             CreddClient::extract_env_export_block(&secret)
                         } else {
@@ -335,17 +338,15 @@ async fn resolve_string(
         } else {
             for (full_match, svc, key, field) in matches {
                 match client.fetch(&svc, &key).await {
-                    Ok(secret) => {
-                        match CreddClient::extract_field(&secret, &field) {
-                            Ok(val) => {
-                                tier3_values.push(val.clone());
-                                result = result.replace(&full_match, &val);
-                            }
-                            Err(e) => {
-                                errors.push(format!("{}:{}/{}.{}: {}", full_match, svc, key, field, e));
-                            }
+                    Ok(secret) => match CreddClient::extract_field(&secret, &field) {
+                        Ok(val) => {
+                            tier3_values.push(val.clone());
+                            result = result.replace(&full_match, &val);
                         }
-                    }
+                        Err(e) => {
+                            errors.push(format!("{}:{}/{}.{}: {}", full_match, svc, key, field, e));
+                        }
+                    },
                     Err(e) => {
                         errors.push(format!("{}: {}", full_match, e));
                     }

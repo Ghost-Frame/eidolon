@@ -12,9 +12,9 @@ mod server;
 mod session;
 
 use config::Config;
+use eidolon_lib::brain::Brain;
 use scrubbing::ScrubRegistry;
 use session::SessionManager;
-use eidolon_lib::brain::Brain;
 
 pub struct AppState {
     pub brain: Arc<Mutex<Brain>>,
@@ -55,7 +55,10 @@ async fn main() {
             Ok(()) => tracing::info!("secrets bootstrapped from credd"),
             Err(e) => {
                 if config.api_key.is_empty() || config.engram.api_key.is_none() {
-                    eprintln!("[eidolon-daemon] credd bootstrap failed and no fallback keys: {}", e);
+                    eprintln!(
+                        "[eidolon-daemon] credd bootstrap failed and no fallback keys: {}",
+                        e
+                    );
                     std::process::exit(1);
                 }
                 tracing::warn!("credd bootstrap failed (using config fallbacks): {}", e);
@@ -68,7 +71,11 @@ async fn main() {
         tracing::warn!("no credd agent_key configured -- using plaintext config (DEPRECATED)");
     }
 
-    tracing::info!("eidolon-daemon starting on {}:{}", config.server.host, config.server.port);
+    tracing::info!(
+        "eidolon-daemon starting on {}:{}",
+        config.server.host,
+        config.server.port
+    );
     tracing::info!("brain db: {}", config.brain.db_path);
     tracing::info!("engram url: {}", config.engram.url);
 
@@ -102,7 +109,7 @@ async fn main() {
 
     tracing::info!("listening on {}", bind_addr);
 
-    if let Err(e) = axum::serve(listener, router).await {
+    if let Err(e) = axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>()).await {
         eprintln!("[eidolon-daemon] server error: {}", e);
         std::process::exit(1);
     }
