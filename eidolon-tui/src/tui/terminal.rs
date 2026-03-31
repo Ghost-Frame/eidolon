@@ -1,6 +1,6 @@
 // src/tui/terminal.rs
 use crossterm::{
-    event::{self, Event, KeyEvent},
+    event::{self, Event, KeyEvent, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -41,7 +41,9 @@ pub enum AppEvent {
 pub fn poll_event(timeout: Duration) -> Option<AppEvent> {
     if event::poll(timeout).ok()? {
         if let Ok(Event::Key(key)) = event::read() {
-            return Some(AppEvent::Key(key));
+            if key.kind == KeyEventKind::Press {
+                return Some(AppEvent::Key(key));
+            }
         }
     }
     Some(AppEvent::Tick)

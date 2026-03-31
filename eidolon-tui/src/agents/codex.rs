@@ -7,15 +7,17 @@ use tokio::sync::mpsc;
 pub struct CodexSession {
     pub session_id: String,
     pub task: String,
+    pub model: String,
     process: Option<Child>,
     working_dir: PathBuf,
 }
 
 impl CodexSession {
-    pub fn new(session_id: &str, task: &str, working_dir: PathBuf) -> Self {
+    pub fn new(session_id: &str, task: &str, model: &str, working_dir: PathBuf) -> Self {
         Self {
             session_id: session_id.to_string(),
             task: task.to_string(),
+            model: model.to_string(),
             process: None,
             working_dir,
         }
@@ -28,8 +30,11 @@ impl CodexSession {
         tx: mpsc::UnboundedSender<String>,
     ) -> Result<(), String> {
         let mut cmd = Command::new(command);
-        cmd.args(args)
-            .arg(&self.task)
+        cmd.args(args);
+        if !self.model.is_empty() {
+            cmd.args(["--model", &self.model]);
+        }
+        cmd.arg(&self.task)
             .current_dir(&self.working_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -39,13 +44,26 @@ impl CodexSession {
         let stdout = child.stdout.take().ok_or("No stdout")?;
         let tx_clone = tx.clone();
 
+        let stderr = child.stderr.take();
+        let tx_err = tx_clone.clone();
+
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let _ = tx_clone.send(line);
+                let _ = tx_clone.send(line + "\n");
             }
         });
+
+        if let Some(stderr) = stderr {
+            tokio::spawn(async move {
+                let reader = BufReader::new(stderr);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let _ = tx_err.send(line + "\n");
+                }
+            });
+        }
 
         self.process = Some(child);
         Ok(())

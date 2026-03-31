@@ -36,15 +36,21 @@ impl LlamaSidecar {
     /// Check if llama-server is already running on the configured port.
     pub async fn check_health(&self) -> bool {
         let url = format!("http://localhost:{}/health", self.port);
-        match reqwest::get(&url).await {
-            Ok(resp) => resp.status().is_success(),
-            Err(_) => false,
-        }
+        let client = reqwest::Client::new();
+        tokio::time::timeout(
+            std::time::Duration::from_millis(800),
+            client.get(&url).send(),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
     }
 
     /// Start llama-server if not already running.
     pub async fn start(&mut self) -> Result<(), String> {
-        // Check if already running
+        // Check if already running on our port
         if self.check_health().await {
             self.status = SidecarStatus::Ready;
             return Ok(());
@@ -52,31 +58,72 @@ impl LlamaSidecar {
 
         self.status = SidecarStatus::Starting;
 
+        // Kill any stale llama-server from a previous run
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("taskkill")
+                .args(["/F", "/IM", "llama-server.exe", "/T"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            // Give the OS a moment to release the port
+            sleep(Duration::from_millis(500)).await;
+        }
+
+        let log_path = dirs::data_dir()
+            .unwrap_or_default()
+            .join("eidolon")
+            .join("llama-server.log");
+
         let child = Command::new(&self.server_path)
             .args([
                 "-m", &self.model_path,
                 "-c", &self.context_length.to_string(),
                 "-ngl", &self.gpu_layers.to_string(),
                 "--port", &self.port.to_string(),
+                "--parallel", "2",
             ])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(
+                std::fs::File::create(&log_path)
+                    .map(Into::into)
+                    .unwrap_or(Stdio::null()),
+            )
             .spawn()
             .map_err(|e| format!("Failed to start llama-server: {}", e))?;
 
         self.process = Some(child);
 
-        // Poll health endpoint until ready (timeout 30s)
-        for _ in 0..60 {
+        // Poll health endpoint until ready (timeout 120s -- 14B model on GPU can take a while)
+        for _ in 0..240 {
             sleep(Duration::from_millis(500)).await;
+
+            // Check if process died (port conflict, missing DLL, bad model, etc.)
+            if let Some(ref mut child) = self.process {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        let msg = format!("llama-server exited during startup ({}). Check {}", status, log_path.display());
+                        self.status = SidecarStatus::Error(msg.clone());
+                        self.process = None;
+                        return Err(msg);
+                    }
+                    Ok(None) => {} // still running, good
+                    Err(e) => {
+                        let msg = format!("Failed to check llama-server status: {}", e);
+                        self.status = SidecarStatus::Error(msg.clone());
+                        return Err(msg);
+                    }
+                }
+            }
+
             if self.check_health().await {
                 self.status = SidecarStatus::Ready;
                 return Ok(());
             }
         }
 
-        self.status = SidecarStatus::Error("Startup timeout (30s)".to_string());
-        Err("llama-server failed to become healthy within 30 seconds".to_string())
+        self.status = SidecarStatus::Error("Startup timeout (120s)".to_string());
+        Err("llama-server failed to become healthy within 120 seconds".to_string())
     }
 
     /// Stop llama-server.

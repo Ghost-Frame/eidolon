@@ -39,9 +39,15 @@ impl ClaudeSession {
         args: &[String],
         tx: mpsc::UnboundedSender<String>,
     ) -> Result<(), String> {
+        std::fs::create_dir_all(&self.session_dir)
+            .map_err(|e| format!("Failed to create session dir: {}", e))?;
+
         let mut cmd = Command::new(command);
-        cmd.args(args)
-            .arg(&self.task)
+        cmd.args(args);
+        if !self.model.is_empty() {
+            cmd.args(["--model", &self.model]);
+        }
+        cmd.arg(&self.task)
             .current_dir(&self.session_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -49,15 +55,27 @@ impl ClaudeSession {
         let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn claude: {}", e))?;
 
         let stdout = child.stdout.take().ok_or("No stdout")?;
-        let tx_clone = tx.clone();
+        let stderr = child.stderr.take();
+        let tx_out = tx.clone();
+        let tx_err = tx.clone();
 
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let _ = tx_clone.send(line);
+                let _ = tx_out.send(line + "\n");
             }
         });
+
+        if let Some(stderr) = stderr {
+            tokio::spawn(async move {
+                let reader = BufReader::new(stderr);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let _ = tx_err.send(line + "\n");
+                }
+            });
+        }
 
         self.process = Some(child);
         Ok(())
