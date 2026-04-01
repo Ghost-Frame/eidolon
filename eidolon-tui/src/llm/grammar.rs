@@ -8,7 +8,7 @@ pub fn intent_routing_grammar() -> String {
         r#"agent ::= "\"null\"" | "\"claude\"" | "\"codex\"""#,
         r#"tools ::= "[" ws (string ("," ws string)*)? "]""#,
         r#"number ::= [0-9] "." [0-9] [0-9]?"#,
-        r#"string ::= "\"" [a-zA-Z0-9_ .,'!?:;\-/]* "\"" "#,
+        r#"string ::= "\"" [a-zA-Z0-9_ .,'!?:;/\-]* "\"" "#,
         "ws ::= [ \\t\\n]*",
     ];
     s.join("\n") + "\n"
@@ -30,7 +30,7 @@ pub fn tool_call_grammar() -> String {
         r#"param ::= string ":" ws value"#,
         r#"value ::= string | number | "true" | "false" | "null""#,
         r#"number ::= "-"? [0-9]+ ("." [0-9]+)?"#,
-        r#"string ::= "\"" [a-zA-Z0-9_ .,'!?:;\-/@#$%^&*()+={}|<>~`\[\]]* "\"" "#,
+        r#"string ::= "\"" [a-zA-Z0-9_ .,'!?:;/@#$%^&*()+={}|<>~`\-]* "\"" "#,
         "ws ::= [ \\t\\n]*",
     ];
     s.join("\n") + "\n"

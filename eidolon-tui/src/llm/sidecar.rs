@@ -1,3 +1,4 @@
+use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -48,6 +49,24 @@ impl LlamaSidecar {
         .unwrap_or(false)
     }
 
+    /// Find a port that is actually free. Tries the preferred port first,
+    /// then falls back to nearby ports, then lets the OS pick one.
+    fn find_available_port(preferred: u16) -> u16 {
+        if TcpListener::bind(("127.0.0.1", preferred)).is_ok() {
+            return preferred;
+        }
+        for offset in 1..=20 {
+            let candidate = preferred.wrapping_add(offset);
+            if TcpListener::bind(("127.0.0.1", candidate)).is_ok() {
+                return candidate;
+            }
+        }
+        TcpListener::bind(("127.0.0.1", 0))
+            .and_then(|l| l.local_addr())
+            .map(|a| a.port())
+            .unwrap_or(preferred)
+    }
+
     /// Start llama-server if not already running.
     pub async fn start(&mut self) -> Result<(), String> {
         // Check if already running on our port
@@ -66,9 +85,11 @@ impl LlamaSidecar {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
-            // Give the OS a moment to release the port
             sleep(Duration::from_millis(500)).await;
         }
+
+        // Find a port that's actually free (avoids TIME_WAIT from crashed processes)
+        self.port = Self::find_available_port(self.port);
 
         let log_path = dirs::data_dir()
             .unwrap_or_default()

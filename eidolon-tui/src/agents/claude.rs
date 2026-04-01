@@ -49,6 +49,8 @@ impl ClaudeSession {
         }
         cmd.arg(&self.task)
             .current_dir(&self.session_dir)
+            .env_remove("CLAUDECODE")
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 

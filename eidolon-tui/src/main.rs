@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let llm_base_url = app.config.llm.base_url.clone()
         .unwrap_or_else(|| format!("http://localhost:{}", app.config.llm.port));
 
-    let llm_client = Arc::new(LlmClient::new(&llm_base_url));
+    let mut llm_client = Arc::new(LlmClient::new(&llm_base_url));
 
     let engram_client = Arc::new(EngramClient::new(
         &app.config.engram.url,
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut orchestrator = AgentOrchestrator::new(app.config.agents.clone());
 
     // Spawn llama-server sidecar if needed -- result piped through channel
-    let mut sidecar_result_rx: Option<oneshot::Receiver<SidecarStatus>> = None;
+    let mut sidecar_result_rx: Option<oneshot::Receiver<(SidecarStatus, u16)>> = None;
     if app.config.llm.base_url.is_none() && !app.config.llm.model_path.is_empty() {
         let server_path = app.config.llm.server_path.clone();
         let model_path = app.config.llm.model_path.clone();
@@ -66,7 +66,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 sidecar.status().clone()
             };
-            let _ = tx.send(result);
+            let actual_port = sidecar.port();
+            let _ = tx.send((result, actual_port));
             // Keep sidecar alive (Drop kills the process)
             loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
         });
@@ -86,9 +87,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // --- POLL SIDECAR STARTUP RESULT ---
         if let Some(rx) = sidecar_result_rx.as_mut() {
             match rx.try_recv() {
-                Ok(status) => {
+                Ok((status, actual_port)) => {
                     if let SidecarStatus::Error(ref e) = status {
                         app.add_gojo_message(&format!("LLM failed to start: {}", e));
+                    }
+                    // Recreate LlmClient if sidecar bound a different port
+                    if actual_port != app.config.llm.port && status == SidecarStatus::Ready {
+                        let new_url = format!("http://localhost:{}", actual_port);
+                        llm_client = Arc::new(LlmClient::new(&new_url));
+                        app.config.llm.port = actual_port;
                     }
                     app.sidecar_status = status;
                     sidecar_result_rx = None;
@@ -281,11 +288,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        Err(_) => {
-                            // Routing failed -- fall back to casual
-                            app.mode = AppMode::Normal;
-                            let fallback_msg = app.pending_user_message.clone();
-                            fire_casual_stream(&mut app, &llm_client, &system_prompt, &fallback_msg);
+                        Err(e) => {
+                            // Routing failed -- use keyword fallback to detect action intent
+                            let fallback = RoutingDecision::keyword_fallback(&app.pending_user_message);
+                            match fallback.intent {
+                                eidolon_tui::conversation::router::Intent::Action => {
+                                    // Abort optimistic casual stream, show agent confirmation
+                                    if let Some(abort) = app.stream_abort.take() {
+                                        abort.abort();
+                                    }
+                                    app.pending_response.clear();
+                                    app.token_rx = None;
+                                    let agent = fallback.agent_needed.clone()
+                                        .unwrap_or_else(|| "claude".to_string());
+                                    let model = fallback.select_model(&app.config.agents);
+                                    app.pending_decision = Some(fallback);
+                                    app.mode = AppMode::AwaitingConfirmation;
+                                    app.add_gojo_message(&format!(
+                                        "Router hiccup ({}), but this looks like an action. Use {} (-> {})?\n\nSay yes to proceed.",
+                                        e, agent, model
+                                    ));
+                                }
+                                _ => {
+                                    // Casual stream already running, let it finish
+                                    app.mode = AppMode::Generating;
+                                }
+                            }
                         }
                     }
                 }
