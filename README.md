@@ -47,13 +47,24 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 ## Architecture
 
 ```
++---------------------------------------+
+|           Terminal UI (TUI)           |
+|         eidolon-tui (Windows)         |
+|                                       |
+|  Local LLM (llama-server / GPU)       |
+|  Parallel routing + chat              |
+|  /daemon /brain /sessions /dream      |
+|  DaemonClient (HTTP + WebSocket)      |
++---------------------------------------+
+           |  HTTP / WS
+           v
 +----------------------------------------------------------+
 |                     Guardian Daemon                      |
 |               eidolon-daemon (Rust / axum)               |
 |                                                          |
 |  HTTP :7700    Living Prompt     Action Gate             |
 |  /tasks        Generator         /gate/check             |
-|  /sessions     /prompt/*         allow / block / enrich  |
+|  /sessions     /prompt/generate  allow / block / enrich  |
 |  /gate/*       Engram context                            |
 |  /brain/*      + neural recall                           |
 |                                                          |
@@ -84,7 +95,7 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 +--------------------+
 ```
 
-Three layers:
+Four layers:
 
 **1. Neural Substrate (Rust / C++)**
 Core of `eidolon-lib`. Hopfield-based associative store, weighted activation graph, interference resolution, natural decay, offline dreaming, instinct pre-training, feedback-driven evolution. Both Rust and C++ implementations speak the same JSON-over-stdio protocol. Engram selects via config.
@@ -94,6 +105,9 @@ LLM-powered answer synthesis grounded in recalled memories. Detects hallucinatio
 
 **3. Guardian Daemon (Rust / axum)**
 Persistent service at `:7700`. Manages agent sessions, generates living prompts from current brain state, runs the action gate on every outbound command, absorbs session learnings back into the brain after completion.
+
+**4. Terminal UI (Rust / ratatui)**
+Interactive TUI with a local LLM sidecar (llama-server on GPU). Handles routing and casual chat locally, delegates agent spawning, gate checks, brain queries, and session management to the daemon via HTTP and WebSocket. Hybrid architecture: inference stays on the GPU box, orchestration lives on the daemon.
 
 ---
 
@@ -237,9 +251,18 @@ eidolon/
     src/
       agents/           # Agent registry and adapters (claude-code, etc.)
       prompt/           # Living prompt generator and templates
-      routes/           # HTTP routes (gate, brain, sessions, tasks)
+      routes/           # HTTP routes (gate, brain, sessions, tasks, prompt)
       absorber.rs       # Session absorption back into brain
       session.rs        # Session lifecycle management
+    tests/              # Security pentest suite (72 tests)
+  eidolon-tui/          # Terminal UI with local LLM + daemon integration
+    src/
+      agents/           # Agent orchestrator, gate check, prompt generator
+      conversation/     # Router, personality (Gojo), conductor
+      daemon/           # DaemonClient (HTTP + WebSocket)
+      llm/              # LLM client, llama-server sidecar manager
+      syntheos/         # Engram, Chiasm, Axon, Broca, Soma clients
+      tui/              # Terminal rendering, themes, widgets
   eidolon-cli/          # CLI client for submitting tasks
   rust/                 # Standalone Rust backend (JSON-over-stdio protocol)
   cpp/                  # Standalone C++ backend (same protocol)
@@ -253,9 +276,9 @@ eidolon/
 
 ## Status
 
-Experimental. Phase 3 complete.
+Experimental. Phase 3.5 -- TUI stabilization and daemon integration.
 
-Working: action gate, living prompts, agent wrapping for Claude Code, session absorption, neural recall, dreaming, evolution. The gate is deployed and catching mistakes in live sessions.
+Working: action gate, living prompts, agent wrapping for Claude Code, session absorption, neural recall, dreaming, evolution, TUI with local LLM routing, daemon slash commands (/daemon, /brain, /sessions, /dream), 165+ tests including 72 security pentest tests. The gate is deployed and catching mistakes in live sessions.
 
 Not production-hardened: no multi-user support, no TLS on the daemon, agent registry is single-instance. Use on a trusted network.
 
