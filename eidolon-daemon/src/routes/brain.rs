@@ -90,3 +90,19 @@ pub async fn brain_query(
         "result": result,
     })))
 }
+
+pub async fn brain_dream(
+    State(state): State<Arc<AppState>>,
+) -> Json<Value> {
+    let mut brain = state.brain.lock().await;
+    let result = brain.run_dream_cycle();
+    tracing::info!(
+        "manual dream cycle: replayed={} merged={} pruned={} discovered={} resolved={} ({}ms)",
+        result.replayed, result.merged, result.pruned_patterns,
+        result.discovered, result.resolved, result.cycle_time_ms
+    );
+    Json(json!({
+        "ok": true,
+        "result": result,
+    }))
+}

@@ -123,7 +123,7 @@ pub async fn gate_check(
 
     // SSH command checks (block wrong servers, enrich correct ones)
     if command.contains("ssh ") || command.starts_with("ssh") {
-        if let Some(mut result) = check_ssh_command(command, &state).await {
+        if let Some((mut result, memory_ids)) = check_ssh_command(command, &state).await {
             let action = result.get("action").and_then(|v| v.as_str()).unwrap_or("allow");
             tracing::info!("gate: {} (ssh check) tool={} session={}", action, tool_name, session_id);
             // Attach modified_input if secrets were resolved and action is not block
@@ -132,17 +132,40 @@ pub async fn gate_check(
                     result.as_object_mut().map(|obj| obj.insert("modified_input".to_string(), mi));
                 }
             }
+
+            // F6: Record evolution feedback for brain memories used
+            #[cfg(feature = "evolution")]
+            if !memory_ids.is_empty() {
+                let brain = Arc::clone(&state.brain);
+                let useful = result.get("action").and_then(|v| v.as_str()) != Some("block");
+                tokio::spawn(async move {
+                    let mut brain = brain.lock().await;
+                    brain.evolution_feedback(memory_ids, vec![], useful);
+                });
+            }
+
             return Json(result);
         }
     }
 
     // systemctl enrichment
     if command.contains("systemctl ") {
-        if let Some(mut enrichment) = check_systemctl_command(command, &state).await {
+        if let Some((mut enrichment, memory_ids)) = check_systemctl_command(command, &state).await {
             tracing::info!("gate: enrich (systemctl context) tool={} session={}", tool_name, session_id);
             if let Some(mi) = modified_input {
                 enrichment.as_object_mut().map(|obj| obj.insert("modified_input".to_string(), mi));
             }
+
+            // F6: Record evolution feedback for brain memories used
+            #[cfg(feature = "evolution")]
+            if !memory_ids.is_empty() {
+                let brain = Arc::clone(&state.brain);
+                tokio::spawn(async move {
+                    let mut brain = brain.lock().await;
+                    brain.evolution_feedback(memory_ids, vec![], true);
+                });
+            }
+
             return Json(enrichment);
         }
     }
@@ -156,7 +179,7 @@ pub async fn gate_check(
     }
 }
 
-fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String> {
+pub fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String> {
     let cmd_lower = command.to_lowercase();
 
     // Destructive rm patterns
@@ -232,7 +255,16 @@ fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String> {
     None
 }
 
-async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
+#[derive(Debug, Clone)]
+pub struct SshTarget {
+    pub user: Option<String>,
+    pub host: String,
+    pub port: Option<u16>,
+}
+
+/// Parse an SSH command string to extract the target host, user, and port.
+/// Used for SSRF detection and server map lookups.
+pub fn parse_ssh_target(command: &str) -> Option<SshTarget> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let ssh_pos = tokens.iter().position(|&t| t == "ssh")?;
 
@@ -260,25 +292,32 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
     }
 
     let host_raw = host_raw?;
-    // Strip user@ prefix if present
-    let host = if let Some(pos) = host_raw.rfind('@') {
-        &host_raw[pos + 1..]
+    let (user, host) = if let Some(pos) = host_raw.rfind('@') {
+        (Some(host_raw[..pos].to_string()), host_raw[pos + 1..].to_string())
     } else {
-        host_raw
+        (None, host_raw.to_string())
     };
+
+    Some(SshTarget { user, host, port })
+}
+
+async fn check_ssh_command(command: &str, state: &AppState) -> Option<(Value, Vec<i64>)> {
+    let target = parse_ssh_target(command)?;
+    let host = &target.host;
+    let port = target.port;
 
     // Check against config server map (name or alias match)
     if let Some(server) = find_server(host, &state.config.servers) {
         // If this server requires a custom port and none (or wrong port) is provided
         if server.custom_port_required {
             if port.is_none() || port == Some(22) {
-                return Some(json!({
+                return Some((json!({
                     "action": "enrich",
                     "message": format!(
                         "Server {} requires a custom SSH port ({}). Notes: {}",
                         server.name, server.ssh_port, server.notes
                     ),
-                }));
+                }), vec![]));
             }
         }
         let notes = if server.no_reboot {
@@ -286,10 +325,10 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
         } else {
             server.notes.clone()
         };
-        return Some(json!({
+        return Some((json!({
             "action": "enrich",
             "message": format!("Server: {} ({}). SSH user: {}. {}", server.name, server.role, server.ssh_user, notes),
-        }));
+        }), vec![]));
     }
 
     // Unknown host: query brain for context
@@ -309,14 +348,15 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
                     if !embedding.is_empty() {
                         let mut brain = state.brain.lock().await;
                         let result = brain.query(&embedding, 5, 8.0, 2);
+                        let memory_ids: Vec<i64> = result.activated.iter().map(|m| m.id).collect();
                         let top = result.activated.first();
                         if let Some(mem) = top {
                             if mem.activation > 0.5 {
-                                return Some(json!({
+                                return Some((json!({
                                     "action": "enrich",
                                     "message": format!("Brain context for {}: {}", host, mem.content),
                                     "context": mem.content.clone(),
-                                }));
+                                }), memory_ids));
                             }
                         }
                     }
@@ -328,7 +368,7 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<Value> {
     None
 }
 
-async fn check_systemctl_command(command: &str, state: &AppState) -> Option<Value> {
+async fn check_systemctl_command(command: &str, state: &AppState) -> Option<(Value, Vec<i64>)> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let systemctl_pos = tokens.iter().position(|&t| t == "systemctl")?;
 
@@ -355,14 +395,15 @@ async fn check_systemctl_command(command: &str, state: &AppState) -> Option<Valu
                     if !embedding.is_empty() {
                         let mut brain = state.brain.lock().await;
                         let result = brain.query(&embedding, 5, 8.0, 2);
+                        let memory_ids: Vec<i64> = result.activated.iter().map(|m| m.id).collect();
                         let top = result.activated.first();
                         if let Some(mem) = top {
                             if mem.activation > 0.5 && mem.content.to_lowercase().contains("restart") {
-                                return Some(json!({
+                                return Some((json!({
                                     "action": "enrich",
                                     "message": format!("Brain context for {} {}: {}", action, service, mem.content),
                                     "context": mem.content.clone(),
-                                }));
+                                }), memory_ids));
                             }
                         }
                     }

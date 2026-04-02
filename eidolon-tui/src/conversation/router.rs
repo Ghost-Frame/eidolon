@@ -118,12 +118,27 @@ impl RoutingDecision {
             "memory", "look up", "find in", "past decision",
         ];
 
-        let intent = if action_keywords.iter().any(|kw| lower.contains(kw)) {
-            Intent::Action
-        } else if memory_keywords.iter().any(|kw| lower.contains(kw)) {
-            Intent::Memory
+        let action_matches: usize = action_keywords.iter()
+            .filter(|kw| lower.contains(*kw))
+            .count();
+        let memory_matches: usize = memory_keywords.iter()
+            .filter(|kw| lower.contains(*kw))
+            .count();
+
+        let (intent, match_count) = if action_matches > memory_matches && action_matches > 0 {
+            (Intent::Action, action_matches)
+        } else if memory_matches > 0 {
+            (Intent::Memory, memory_matches)
         } else {
-            Intent::Casual
+            (Intent::Casual, 0)
+        };
+
+        // Scale confidence by match count: 1 match = 0.35, 2 = 0.5, 3+ = 0.65
+        let confidence = match match_count {
+            0 => 0.2,
+            1 => 0.35,
+            2 => 0.5,
+            _ => 0.65,
         };
 
         let agent_needed = if intent == Intent::Action {
@@ -138,11 +153,11 @@ impl RoutingDecision {
 
         Self {
             intent,
-            confidence: 0.5,
+            confidence,
             complexity: Complexity::Medium,
             tools_needed: vec![],
             agent_needed,
-            reasoning: "Keyword fallback (grammar not enforced)".to_string(),
+            reasoning: format!("Keyword fallback ({} matches)", match_count),
         }
     }
 

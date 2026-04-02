@@ -2,7 +2,7 @@
 fn test_engram_client_constructs_search_request() {
     use eidolon_tui::syntheos::engram::EngramClient;
 
-    let client = EngramClient::new("http://localhost:4200", "test-key");
+    let client = EngramClient::new("http://localhost:4200", "test-key").unwrap();
     let (url, body) = client.build_search_request("test query", 10);
     assert_eq!(url, "http://localhost:4200/search");
     assert!(body.contains("\"query\""));

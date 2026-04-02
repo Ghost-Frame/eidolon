@@ -180,6 +180,8 @@ mod tests {
 
         let writer = FlushFailWriter::new();
         assert!(collector.flush_with_custom_writer(writer).is_err());
-        assert_eq!(collector.buffer.len(), 2);
+        // All lines were written successfully before flush() failed,
+        // so they should NOT be restored (they're in the writer's buffer).
+        assert_eq!(collector.buffer.len(), 0);
     }
 }

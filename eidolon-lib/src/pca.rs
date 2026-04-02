@@ -44,7 +44,7 @@ impl PcaTransform {
             let mut v = Array1::<f32>::zeros(n_features);
             for i in 0..n_features {
                 // Deterministic pseudo-random init
-                let seed = (i as f32 * 1.6180339887 + components.len() as f32 * 2.7182818284).sin();
+                let seed = (i as f32 * 1.618_034 + components.len() as f32 * std::f32::consts::E).sin();
                 v[i] = seed;
             }
             // Normalize

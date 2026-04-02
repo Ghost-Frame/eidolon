@@ -18,7 +18,8 @@ pub struct PromptGenerator {
 impl PromptGenerator {
     pub fn new(base_url: &str, api_key: &str) -> Self {
         Self {
-            engram: EngramClient::new(base_url, api_key),
+            engram: EngramClient::new(base_url, api_key)
+                .unwrap_or_else(|_| panic!("Invalid Engram URL: {}", base_url)),
             openspace: OpenSpaceClient::new(base_url, api_key),
             chiasm: ChiasmClient::new(base_url, api_key),
             broca: BrocaClient::new(base_url, api_key),

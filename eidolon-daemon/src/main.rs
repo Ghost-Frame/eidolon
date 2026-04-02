@@ -1,28 +1,11 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-mod absorber;
-mod agents;
-mod config;
-mod prompt;
-mod routes;
-mod scrubbing;
-mod secrets;
-mod server;
-mod session;
-
-use config::Config;
+use eidolon_daemon::*;
+use eidolon_daemon::config::Config;
+use eidolon_daemon::scrubbing::ScrubRegistry;
+use eidolon_daemon::session::SessionManager;
 use eidolon_lib::brain::Brain;
-use scrubbing::ScrubRegistry;
-use session::SessionManager;
-
-pub struct AppState {
-    pub brain: Arc<Mutex<Brain>>,
-    pub sessions: Arc<Mutex<SessionManager>>,
-    pub config: Config,
-    pub http_client: reqwest::Client,
-    pub scrub_registry: Arc<Mutex<ScrubRegistry>>,
-}
 
 #[tokio::main]
 async fn main() {
@@ -96,6 +79,28 @@ async fn main() {
         scrub_registry: Arc::new(Mutex::new(ScrubRegistry::new())),
     });
 
+    // Spawn dream cycle background task
+    {
+        let brain = Arc::clone(&state.brain);
+        let interval_secs = state.config.brain.dream_interval_secs;
+        if interval_secs > 0 {
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+                interval.tick().await; // Skip first immediate tick
+                loop {
+                    interval.tick().await;
+                    let mut brain_guard = brain.lock().await;
+                    let result = brain_guard.run_dream_cycle();
+                    tracing::info!(
+                        "dream cycle: replayed={} merged={} pruned={} discovered={} resolved={} ({}ms)",
+                        result.replayed, result.merged, result.pruned_patterns,
+                        result.discovered, result.resolved, result.cycle_time_ms
+                    );
+                }
+            });
+        }
+    }
+
     let bind_addr = format!("{}:{}", state.config.server.host, state.config.server.port);
     let router = server::build_router(Arc::clone(&state));
 
@@ -109,8 +114,37 @@ async fn main() {
 
     tracing::info!("listening on {}", bind_addr);
 
-    if let Err(e) = axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>()).await {
+    if let Err(e) = axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>())
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+    {
         eprintln!("[eidolon-daemon] server error: {}", e);
         std::process::exit(1);
+    }
+
+    tracing::info!("eidolon-daemon shutting down gracefully");
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => { tracing::info!("received Ctrl+C"); },
+        _ = terminate => { tracing::info!("received SIGTERM"); },
     }
 }

@@ -1,11 +1,12 @@
 use eidolon_tui::config::Config;
+use eidolon_tui::daemon::client::DaemonClient;
 use eidolon_tui::llm::sidecar::SidecarStatus;
 use eidolon_tui::tui::theme::Theme;
 use eidolon_tui::tui::animation::AnimationState;
 use eidolon_tui::tui::widgets::chat_area::ChatMessage;
 use eidolon_tui::conversation::router::RoutingDecision;
 use eidolon_tui::dataset::collector::{DatasetCollector, TrainingExample};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,10 +41,15 @@ pub struct App {
     pub stream_abort: Option<tokio::task::AbortHandle>,
     pub collector: DatasetCollector,
     pub system_prompt: String,
+
+    // Channel for async command results (daemon slash commands, etc.)
+    pub system_msg_rx: mpsc::UnboundedReceiver<String>,
+    // Pending daemon reconnect result
+    pub daemon_reconnect_rx: Option<oneshot::Receiver<Result<DaemonClient, String>>>,
 }
 
 impl App {
-    pub fn new(config: Config, system_prompt: String) -> Self {
+    pub fn new(config: Config, system_prompt: String, system_msg_rx: mpsc::UnboundedReceiver<String>) -> Self {
         let theme_name = config.tui.theme.clone();
         let theme = Theme::by_name(&theme_name).unwrap_or(&eidolon_tui::tui::theme::THEMES[0]);
         let animation = AnimationState::new(config.tui.animations, config.tui.fps);
@@ -80,6 +86,8 @@ impl App {
             stream_abort: None,
             collector,
             system_prompt,
+            system_msg_rx,
+            daemon_reconnect_rx: None,
         }
     }
 

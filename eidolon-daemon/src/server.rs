@@ -12,8 +12,8 @@ use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-use crate::routes::{brain, gate, sessions, tasks};
 use crate::AppState;
+use crate::routes::{brain, gate, prompt, sessions, tasks};
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({
@@ -75,7 +75,7 @@ async fn auth_middleware(
 /// side-channels present in naive early-exit comparisons.
 /// black_box fences prevent the compiler from optimizing the XOR loop
 /// into an early-exit branch.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let ha = Sha256::digest(a);
     let hb = Sha256::digest(b);
     let mut result: u8 = 0;
@@ -86,10 +86,22 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers(Any);
+    let cors = if state.config.safety.cors_origins.is_empty() {
+        // Default: allow localhost origins matching configured host:port
+        let origin = format!("http://{}:{}", state.config.server.host, state.config.server.port);
+        CorsLayer::new()
+            .allow_origin(origin.parse::<axum::http::HeaderValue>().unwrap())
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers(Any)
+    } else {
+        let origins: Vec<axum::http::HeaderValue> = state.config.safety.cors_origins.iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers(Any)
+    };
 
     Router::new()
         .route("/health", get(health))
@@ -100,8 +112,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/sessions", get(sessions::list_sessions))
         .route("/brain/stats", get(brain::brain_stats))
         .route("/brain/query", post(brain::brain_query))
+        .route("/brain/dream", post(brain::brain_dream))
         .route("/gate/check", post(gate::gate_check))
         .route("/gate/complete", post(gate::gate_complete))
+        .route("/prompt/generate", post(prompt::generate_prompt))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware,

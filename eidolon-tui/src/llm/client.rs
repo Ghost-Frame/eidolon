@@ -76,18 +76,32 @@ impl LlmClient {
         }
     }
 
+    /// Check if an error is transient and worth retrying.
+    fn is_transient(status: reqwest::StatusCode) -> bool {
+        matches!(status.as_u16(), 429 | 502 | 503 | 504)
+    }
+
     /// Non-streaming completion. Used for structured output (routing, tool calls).
     pub async fn complete(&self, request: &ChatCompletionRequest) -> Result<ChatCompletionResponse, reqwest::Error> {
         let mut req = request.clone();
         req.stream = false;
 
-        self.http
-            .post(format!("{}/v1/chat/completions", self.base_url))
-            .json(&req)
-            .send()
-            .await?
-            .json()
-            .await
+        let mut retries = 0u32;
+        loop {
+            let resp = self.http
+                .post(format!("{}/v1/chat/completions", self.base_url))
+                .json(&req)
+                .send()
+                .await?;
+
+            if resp.status().is_success() || !Self::is_transient(resp.status()) || retries >= 3 {
+                return resp.json().await;
+            }
+
+            retries += 1;
+            let delay = std::time::Duration::from_millis(500 * (1 << retries.min(3)));
+            tokio::time::sleep(delay).await;
+        }
     }
 
     /// Streaming completion. Sends text deltas through the channel.
@@ -100,11 +114,30 @@ impl LlmClient {
         let mut req = request.clone();
         req.stream = true;
 
-        let response = self.http
-            .post(format!("{}/v1/chat/completions", self.base_url))
-            .json(&req)
-            .send()
-            .await?;
+        let mut retries = 0u32;
+        let response = loop {
+            match self.http
+                .post(format!("{}/v1/chat/completions", self.base_url))
+                .json(&req)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() || !Self::is_transient(resp.status()) || retries >= 3 => {
+                    break resp;
+                }
+                Ok(_) => {
+                    retries += 1;
+                    let delay = std::time::Duration::from_millis(500 * (1 << retries.min(3)));
+                    tokio::time::sleep(delay).await;
+                }
+                Err(e) if retries < 3 && e.is_connect() => {
+                    retries += 1;
+                    let delay = std::time::Duration::from_millis(500 * (1 << retries.min(3)));
+                    tokio::time::sleep(delay).await;
+                }
+                Err(e) => return Err(Box::new(e)),
+            }
+        };
 
         let mut accumulated = String::new();
         let mut stream = response.bytes_stream();
@@ -127,12 +160,17 @@ impl LlmClient {
                     if data == "[DONE]" {
                         break 'stream;
                     }
-                    if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
-                        for choice in &chunk.choices {
-                            if let Some(content) = &choice.delta.content {
-                                accumulated.push_str(content);
-                                let _ = tx.send(content.clone());
+                    match serde_json::from_str::<StreamChunk>(data) {
+                        Ok(chunk) => {
+                            for choice in &chunk.choices {
+                                if let Some(content) = &choice.delta.content {
+                                    accumulated.push_str(content);
+                                    let _ = tx.send(content.clone());
+                                }
                             }
+                        }
+                        Err(_) => {
+                            let _ = tx.send("[LLM parse error]".to_string());
                         }
                     }
                 }

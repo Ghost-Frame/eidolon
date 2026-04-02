@@ -42,6 +42,10 @@ impl ClaudeSession {
         std::fs::create_dir_all(&self.session_dir)
             .map_err(|e| format!("Failed to create session dir: {}", e))?;
 
+        if which::which(command).is_err() {
+            return Err(format!("Binary not found in PATH: {}", command));
+        }
+
         let mut cmd = Command::new(command);
         cmd.args(args);
         if !self.model.is_empty() {

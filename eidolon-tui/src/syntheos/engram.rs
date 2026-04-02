@@ -15,7 +15,10 @@ impl EngramClient {
         validate_base_url(base_url)?;
 
         Ok(Self {
-            http: super::build_http_client(super::default_http_timeout()),
+            http: Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
         })

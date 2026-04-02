@@ -58,3 +58,84 @@ fn test_keyword_fallback_casual() {
     assert_eq!(decision.intent, Intent::Casual);
     assert!(decision.agent_needed.is_none());
 }
+
+// T2: Extended routing tests
+
+#[test]
+fn test_keyword_fallback_memory() {
+    use eidolon_tui::conversation::router::{RoutingDecision, Intent};
+    let decision = RoutingDecision::keyword_fallback("recall what we decided about the server");
+    assert_eq!(decision.intent, Intent::Memory);
+    assert!(decision.agent_needed.is_none());
+}
+
+#[test]
+fn test_keyword_fallback_confidence_scales() {
+    use eidolon_tui::conversation::router::RoutingDecision;
+
+    // Single match -- lower confidence
+    let single = RoutingDecision::keyword_fallback("fix something");
+    assert!(single.confidence < 0.5, "single match should have low confidence: {}", single.confidence);
+
+    // Multiple matches -- higher confidence
+    let multi = RoutingDecision::keyword_fallback("fix and deploy and update the build");
+    assert!(multi.confidence > single.confidence, "multi match ({}) should beat single ({})", multi.confidence, single.confidence);
+}
+
+#[test]
+fn test_keyword_fallback_codex_agent() {
+    use eidolon_tui::conversation::router::{RoutingDecision, Intent};
+    let decision = RoutingDecision::keyword_fallback("fix this with codex");
+    assert_eq!(decision.intent, Intent::Action);
+    assert_eq!(decision.agent_needed, Some("codex".to_string()));
+}
+
+#[test]
+fn test_extract_from_text_case_insensitive() {
+    use eidolon_tui::conversation::router::{RoutingDecision, Intent};
+    let json = r#"{"intent":"ACTION","confidence":0.8,"complexity":"HEAVY","tools_needed":[],"agent_needed":"claude","reasoning":"test"}"#;
+    let decision = RoutingDecision::extract_from_text(json).unwrap();
+    assert_eq!(decision.intent, Intent::Action);
+}
+
+#[test]
+fn test_extract_from_text_keyword_fallback_on_garbage() {
+    use eidolon_tui::conversation::router::{RoutingDecision, Intent};
+    // No JSON, no keywords -- should be casual
+    let decision = RoutingDecision::extract_from_text("hello world how are you").unwrap();
+    assert_eq!(decision.intent, Intent::Casual);
+}
+
+#[test]
+fn test_routing_decision_needs_agent() {
+    use eidolon_tui::conversation::router::RoutingDecision;
+    let json = r#"{"intent":"action","confidence":0.9,"complexity":"medium","tools_needed":[],"agent_needed":"claude","reasoning":"test"}"#;
+    let decision = RoutingDecision::from_json(json).unwrap();
+    assert!(decision.needs_agent());
+}
+
+#[test]
+fn test_routing_decision_select_model() {
+    use eidolon_tui::conversation::router::RoutingDecision;
+    use eidolon_tui::config::AgentsConfig;
+
+    let config = AgentsConfig::default();
+
+    // Light complexity
+    let json = r#"{"intent":"action","confidence":0.9,"complexity":"light","tools_needed":[],"agent_needed":"claude","reasoning":"test"}"#;
+    let decision = RoutingDecision::from_json(json).unwrap();
+    let model = decision.select_model(&config);
+    assert_eq!(model, config.claude.model_light);
+
+    // Heavy complexity
+    let json = r#"{"intent":"action","confidence":0.9,"complexity":"heavy","tools_needed":[],"agent_needed":"claude","reasoning":"test"}"#;
+    let decision = RoutingDecision::from_json(json).unwrap();
+    let model = decision.select_model(&config);
+    assert_eq!(model, config.claude.model_heavy);
+
+    // Codex agent
+    let json = r#"{"intent":"action","confidence":0.9,"complexity":"medium","tools_needed":[],"agent_needed":"codex","reasoning":"test"}"#;
+    let decision = RoutingDecision::from_json(json).unwrap();
+    let model = decision.select_model(&config);
+    assert_eq!(model, config.codex.model_medium);
+}

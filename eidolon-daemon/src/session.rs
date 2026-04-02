@@ -12,6 +12,7 @@ pub enum SessionStatus {
     Completed,
     Failed,
     Killed,
+    TimedOut,
 }
 
 impl std::fmt::Display for SessionStatus {
@@ -22,6 +23,7 @@ impl std::fmt::Display for SessionStatus {
             SessionStatus::Completed => write!(f, "completed"),
             SessionStatus::Failed => write!(f, "failed"),
             SessionStatus::Killed => write!(f, "killed"),
+            SessionStatus::TimedOut => write!(f, "timed_out"),
         }
     }
 }

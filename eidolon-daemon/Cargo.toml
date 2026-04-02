@@ -3,9 +3,16 @@ name = "eidolon-daemon"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "eidolon_daemon"
+path = "src/lib.rs"
+
 [[bin]]
 name = "eidolon-daemon"
 path = "src/main.rs"
+
+[features]
+evolution = ["eidolon-lib/evolution"]
 
 [dependencies]
 eidolon-lib = { path = "../eidolon-lib" }
@@ -24,7 +31,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
 regex = "1"
 tokio-stream = "0.1"
-sha2 = "0.10"
+sha2 = "0.11.0"
+which = "7"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

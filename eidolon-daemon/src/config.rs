@@ -20,6 +20,12 @@ impl Default for ServerConfig {
 pub struct BrainConfig {
     pub db_path: String,
     pub data_dir: String,
+    #[serde(default = "default_dream_interval")]
+    pub dream_interval_secs: u64,
+}
+
+fn default_dream_interval() -> u64 {
+    3600
 }
 
 impl Default for BrainConfig {
@@ -28,6 +34,7 @@ impl Default for BrainConfig {
         BrainConfig {
             db_path: format!("{}/engram/data/brain.db", home),
             data_dir: format!("{}/eidolon/data", home),
+            dream_interval_secs: 3600,
         }
     }
 }
@@ -125,6 +132,8 @@ pub struct AgentConfig {
     pub default_model: String,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 impl Default for AgentConfig {
@@ -135,6 +144,7 @@ impl Default for AgentConfig {
             models: vec!["opus".to_string(), "sonnet".to_string(), "haiku".to_string()],
             default_model: "sonnet".to_string(),
             env: HashMap::new(),
+            timeout_secs: None,
         }
     }
 }
@@ -164,6 +174,16 @@ pub struct SafetyConfig {
     pub rules: Vec<String>,
     #[serde(default)]
     pub protected_services: Vec<String>,
+    #[serde(default)]
+    pub bypass_permissions: bool,
+    #[serde(default = "default_gate_fail_mode")]
+    pub gate_fail_mode: String,
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+}
+
+fn default_gate_fail_mode() -> String {
+    "open".to_string()
 }
 
 fn default_home() -> String {

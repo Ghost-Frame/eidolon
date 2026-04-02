@@ -36,6 +36,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
         SessionStatus::Completed => "succeeded",
         SessionStatus::Failed => "failed",
         SessionStatus::Killed => "killed",
+        SessionStatus::TimedOut => "timed_out",
         _ => "unknown",
     };
 

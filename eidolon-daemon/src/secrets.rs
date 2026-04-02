@@ -15,7 +15,7 @@ pub struct SecretResolution {
 }
 
 // Tier 1/2: {{secret:svc/key}} or {{secret:svc/key.field}}
-fn secret_regex() -> &'static Regex {
+pub fn secret_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(r"\{\{secret:([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_]+))?\}\}")
@@ -24,7 +24,7 @@ fn secret_regex() -> &'static Regex {
 }
 
 // Tier 3: {{secret-raw:svc/key.field}}
-fn secret_raw_regex() -> &'static Regex {
+pub fn secret_raw_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(r"\{\{secret-raw:([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)\}\}")

@@ -9,6 +9,7 @@ mod app;
 use app::{App, AppMode};
 use eidolon_tui::agents::orchestrator::{AgentOrchestrator, AgentType};
 use eidolon_tui::config::Config;
+use eidolon_tui::daemon::client::DaemonClient;
 use eidolon_tui::conversation::personality::gojo_system_prompt;
 use eidolon_tui::conversation::router::RoutingDecision;
 use eidolon_tui::llm::client::LlmClient;
@@ -25,7 +26,32 @@ use eidolon_tui::tui::widgets::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::load().unwrap_or_default();
+    let mut config = Config::load().unwrap_or_default();
+
+    // Bootstrap API keys from credd if configured
+    if let Err(e) = config.bootstrap_from_credd().await {
+        eprintln!("[eidolon-tui] credd bootstrap: {} (using config fallback)", e);
+    }
+
+    #[cfg(unix)]
+    Config::check_file_permissions();
+
+    // Connect to daemon
+    let mut daemon_client: Option<Arc<DaemonClient>> = if !config.daemon.api_key.is_empty() {
+        let client = DaemonClient::new(&config.daemon.url, &config.daemon.api_key);
+        match client.health().await {
+            Ok(()) => {
+                Some(Arc::new(client))
+            }
+            Err(e) => {
+                eprintln!("[eidolon-tui] daemon connection failed: {} -- action intents will be unavailable", e);
+                None
+            }
+        }
+    } else {
+        eprintln!("[eidolon-tui] no daemon.api_key configured -- action intents will be unavailable");
+        None
+    };
 
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -35,19 +61,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut tui = terminal::init()?;
     let system_prompt = gojo_system_prompt();
-    let mut app = App::new(config.clone(), system_prompt.clone());
+    let (system_msg_tx, system_msg_rx) = mpsc::unbounded_channel::<String>();
+    let mut app = App::new(config.clone(), system_prompt.clone(), system_msg_rx);
 
     let llm_base_url = app.config.llm.base_url.clone()
         .unwrap_or_else(|| format!("http://localhost:{}", app.config.llm.port));
 
     let mut llm_client = Arc::new(LlmClient::new(&llm_base_url));
 
-    let engram_client = Arc::new(EngramClient::new(
-        &app.config.engram.url,
-        &app.config.engram.api_key,
-    ));
+    let engram_client = Arc::new(
+        EngramClient::new(&app.config.engram.url, &app.config.engram.api_key)
+            .unwrap_or_else(|e| {
+                eprintln!("[eidolon-tui] Engram client init failed: {}", e);
+                std::process::exit(1);
+            })
+    );
 
-    let mut orchestrator = AgentOrchestrator::new(app.config.agents.clone());
+    let _orchestrator = AgentOrchestrator::new(app.config.agents.clone());
+
+    // F5: Fire-and-forget Syntheos registration
+    {
+        let engram_url = app.config.engram.url.clone();
+        let engram_key = app.config.engram.api_key.clone();
+        tokio::spawn(async move {
+            let http = reqwest::Client::new();
+            let auth = format!("Bearer {}", engram_key);
+
+            // Register with Soma
+            let _ = http.post(format!("{}/soma/agents", engram_url))
+                .header("Authorization", &auth)
+                .json(&serde_json::json!({
+                    "name": "eidolon-tui",
+                    "type": "interactive",
+                    "description": "Eidolon TUI agent orchestrator",
+                    "capabilities": ["conversation", "agent-spawn", "memory-search"]
+                }))
+                .send().await;
+
+            // Publish agent.online to Axon
+            let _ = http.post(format!("{}/axon/publish", engram_url))
+                .header("Authorization", &auth)
+                .json(&serde_json::json!({
+                    "channel": "system",
+                    "source": "eidolon-tui",
+                    "type": "agent.online",
+                    "payload": {"agent": "eidolon-tui", "task": "interactive session"}
+                }))
+                .send().await;
+
+            // Create Chiasm task
+            let _ = http.post(format!("{}/tasks", engram_url))
+                .header("Authorization", &auth)
+                .json(&serde_json::json!({
+                    "agent": "eidolon-tui",
+                    "project": "eidolon",
+                    "title": "Interactive TUI session"
+                }))
+                .send().await;
+        });
+    }
 
     // Spawn llama-server sidecar if needed -- result piped through channel
     let mut sidecar_result_rx: Option<oneshot::Receiver<(SidecarStatus, u16)>> = None;
@@ -347,6 +419,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        // --- DRAIN SYSTEM MESSAGES (from async daemon commands) ---
+        while let Ok(msg) = app.system_msg_rx.try_recv() {
+            app.add_gojo_message(&msg);
+        }
+
+        // --- POLL DAEMON RECONNECT ---
+        if let Some(rx) = app.daemon_reconnect_rx.as_mut() {
+            match rx.try_recv() {
+                Ok(Ok(client)) => {
+                    daemon_client = Some(Arc::new(client));
+                    app.add_gojo_message("Daemon connected.");
+                    app.daemon_reconnect_rx = None;
+                }
+                Ok(Err(e)) => {
+                    app.add_gojo_message(&format!("Daemon reconnect failed: {}", e));
+                    app.daemon_reconnect_rx = None;
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {}
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    app.daemon_reconnect_rx = None;
+                }
+            }
+        }
+
         // --- INPUT EVENTS ---
         let timeout = Duration::from_millis(app.animation.frame_duration_ms());
         if let Some(event) = terminal::poll_event(timeout) {
@@ -366,7 +462,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         (_, KeyCode::Enter) => {
                             if let Some(msg) = app.submit_input() {
                                 if msg.starts_with('/') {
-                                    handle_slash_command(&mut app, &msg);
+                                    if !handle_daemon_command(&mut app, &msg, &daemon_client, &system_msg_tx) {
+                                        handle_slash_command(&mut app, &msg);
+                                    }
                                 } else if app.mode == AppMode::AwaitingConfirmation {
                                     let lower = msg.trim().to_lowercase();
                                     if lower == "yes" || lower == "y" || lower == "do it" || lower == "go" {
@@ -378,31 +476,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let selected_model = decision.select_model(&app.config.agents);
                                             let complexity = format!("{:?}", decision.complexity).to_lowercase();
 
-                                            let agent_type = match agent_name.as_str() {
-                                                "codex" => AgentType::Codex {
-                                                    model: selected_model.clone(),
-                                                },
-                                                _ => AgentType::Claude {
-                                                    model: selected_model.clone(),
-                                                },
-                                            };
+                                            // Check daemon availability
+                                            if let Some(ref daemon) = daemon_client {
+                                                let daemon = Arc::clone(daemon);
+                                                let task_clone = task.clone();
+                                                let agent_clone = agent_name.clone();
+                                                let model_clone = selected_model.clone();
+                                                let complexity_clone = complexity.clone();
 
-                                            match orchestrator.spawn(agent_type, &task, None, None).await {
-                                                Ok(session) => {
-                                                    app.add_gojo_message(&format!(
-                                                        "Spawning {} ({} -- {}). Stand back.",
-                                                        agent_name, complexity, selected_model
-                                                    ));
-                                                    app.pending_response.clear();
-                                                    app.token_rx = Some(session.output_rx);
-                                                    app.mode = AppMode::Generating;
-                                                }
-                                                Err(e) => {
-                                                    app.add_gojo_message(&format!(
-                                                        "Couldn't spawn {}: {}", agent_name, e
-                                                    ));
-                                                    app.mode = AppMode::Normal;
-                                                }
+                                                app.add_gojo_message(&format!(
+                                                    "Spawning {} ({} -- {}) via daemon. Stand back.",
+                                                    agent_clone, complexity_clone, model_clone
+                                                ));
+
+                                                let (tx, rx) = mpsc::unbounded_channel();
+                                                app.pending_response.clear();
+                                                app.token_rx = Some(rx);
+                                                app.mode = AppMode::Generating;
+
+                                                tokio::spawn(async move {
+                                                    // Submit task to daemon
+                                                    match daemon.submit_task(&task_clone, &agent_clone, &model_clone).await {
+                                                        Ok(session) => {
+                                                            let _ = tx.send(format!(
+                                                                "[Daemon session {} started]\n",
+                                                                session.session_id
+                                                            ));
+                                                            // Stream output via WebSocket
+                                                            if let Err(e) = daemon.stream_session(&session.session_id, tx.clone()).await {
+                                                                let _ = tx.send(format!("\n[Stream error: {}]", e));
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            let _ = tx.send(format!("[Daemon error: {}]", e));
+                                                        }
+                                                    }
+                                                });
+                                            } else {
+                                                app.add_gojo_message(
+                                                    "Daemon not connected -- cannot spawn agents. Configure [daemon] in config.toml with url and api_key."
+                                                );
+                                                app.mode = AppMode::Normal;
                                             }
                                         } else {
                                             app.mode = AppMode::Normal;
@@ -437,6 +551,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => {}
             }
         }
+    }
+
+    // F5: Fire-and-forget Syntheos shutdown
+    {
+        let engram_url = config.engram.url.clone();
+        let engram_key = config.engram.api_key.clone();
+        let _ = tokio::spawn(async move {
+            let http = reqwest::Client::new();
+            let auth = format!("Bearer {}", engram_key);
+            let _ = http.post(format!("{}/axon/publish", engram_url))
+                .header("Authorization", &auth)
+                .json(&serde_json::json!({
+                    "channel": "system",
+                    "source": "eidolon-tui",
+                    "type": "agent.offline",
+                    "payload": {"agent": "eidolon-tui", "summary": "TUI session ended"}
+                }))
+                .send().await;
+        }).await;
     }
 
     terminal::restore()?;
@@ -519,6 +652,161 @@ fn build_history(app: &App) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Handle daemon-interactive slash commands. Returns true if the command was handled.
+fn handle_daemon_command(
+    app: &mut App,
+    msg: &str,
+    daemon_client: &Option<Arc<DaemonClient>>,
+    system_tx: &mpsc::UnboundedSender<String>,
+) -> bool {
+    let parts: Vec<&str> = msg.split_whitespace().collect();
+    let cmd = parts.first().map(|s| *s).unwrap_or("");
+
+    match cmd {
+        "/daemon" => {
+            if parts.get(1) == Some(&"reconnect") {
+                if app.config.daemon.api_key.is_empty() {
+                    app.add_gojo_message("No daemon.api_key configured. Add [daemon] section to config.toml.");
+                    return true;
+                }
+                let url = app.config.daemon.url.clone();
+                let key = app.config.daemon.api_key.clone();
+                let (tx, rx) = oneshot::channel();
+                app.daemon_reconnect_rx = Some(rx);
+                app.add_gojo_message("Reconnecting to daemon...");
+                tokio::spawn(async move {
+                    let client = DaemonClient::new(&url, &key);
+                    match client.health().await {
+                        Ok(()) => { let _ = tx.send(Ok(client)); }
+                        Err(e) => { let _ = tx.send(Err(e)); }
+                    }
+                });
+            } else {
+                let connected = daemon_client.is_some();
+                app.add_gojo_message(&format!(
+                    "Daemon: {}\nURL: {}\nUse /daemon reconnect to retry.",
+                    if connected { "connected" } else { "disconnected" },
+                    app.config.daemon.url
+                ));
+            }
+            true
+        }
+        "/brain" => {
+            if let Some(ref daemon) = daemon_client {
+                let daemon = Arc::clone(daemon);
+                let tx = system_tx.clone();
+                tokio::spawn(async move {
+                    match daemon.brain_stats().await {
+                        Ok(stats) => {
+                            let memories = stats["memory_count"].as_u64().unwrap_or(0);
+                            let patterns = stats["pattern_count"].as_u64().unwrap_or(0);
+                            let energy = stats["energy"].as_f64().unwrap_or(0.0);
+                            let _ = tx.send(format!(
+                                "Brain stats:\n  Memories: {}\n  Patterns: {}\n  Energy: {:.4}",
+                                memories, patterns, energy
+                            ));
+                        }
+                        Err(e) => { let _ = tx.send(format!("Brain stats failed: {}", e)); }
+                    }
+                });
+            } else {
+                app.add_gojo_message("Daemon not connected. Use /daemon reconnect.");
+            }
+            true
+        }
+        "/sessions" => {
+            if let Some(ref daemon) = daemon_client {
+                if parts.get(1) == Some(&"kill") {
+                    if let Some(id) = parts.get(2) {
+                        let daemon = Arc::clone(daemon);
+                        let tx = system_tx.clone();
+                        let session_id = id.to_string();
+                        tokio::spawn(async move {
+                            match daemon.kill_session(&session_id).await {
+                                Ok(()) => { let _ = tx.send(format!("Session {} killed.", session_id)); }
+                                Err(e) => { let _ = tx.send(format!("Kill failed: {}", e)); }
+                            }
+                        });
+                    } else {
+                        app.add_gojo_message("Usage: /sessions kill <session_id>");
+                    }
+                } else {
+                    let daemon = Arc::clone(daemon);
+                    let tx = system_tx.clone();
+                    tokio::spawn(async move {
+                        match daemon.list_sessions().await {
+                            Ok(sessions) => {
+                                if let Some(arr) = sessions.as_array() {
+                                    if arr.is_empty() {
+                                        let _ = tx.send("No active sessions.".to_string());
+                                    } else {
+                                        let mut lines = vec!["Sessions:".to_string()];
+                                        for s in arr {
+                                            let id = s["session_id"].as_str().unwrap_or("?");
+                                            let status = s["status"].as_str().unwrap_or("?");
+                                            let agent = s["agent"].as_str().unwrap_or("?");
+                                            lines.push(format!("  {} [{}] ({})", id, status, agent));
+                                        }
+                                        let _ = tx.send(lines.join("\n"));
+                                    }
+                                } else if let Some(obj) = sessions.as_object() {
+                                    // Response might be {"sessions": [...]}
+                                    if let Some(arr) = obj.get("sessions").and_then(|v| v.as_array()) {
+                                        if arr.is_empty() {
+                                            let _ = tx.send("No active sessions.".to_string());
+                                        } else {
+                                            let mut lines = vec!["Sessions:".to_string()];
+                                            for s in arr {
+                                                let id = s["session_id"].as_str().unwrap_or("?");
+                                                let status = s["status"].as_str().unwrap_or("?");
+                                                let agent = s["agent"].as_str().unwrap_or("?");
+                                                lines.push(format!("  {} [{}] ({})", id, status, agent));
+                                            }
+                                            let _ = tx.send(lines.join("\n"));
+                                        }
+                                    } else {
+                                        let _ = tx.send(format!("Sessions: {}", sessions));
+                                    }
+                                } else {
+                                    let _ = tx.send(format!("Sessions: {}", sessions));
+                                }
+                            }
+                            Err(e) => { let _ = tx.send(format!("List sessions failed: {}", e)); }
+                        }
+                    });
+                }
+            } else {
+                app.add_gojo_message("Daemon not connected. Use /daemon reconnect.");
+            }
+            true
+        }
+        "/dream" => {
+            if let Some(ref daemon) = daemon_client {
+                let daemon = Arc::clone(daemon);
+                let tx = system_tx.clone();
+                tokio::spawn(async move {
+                    match daemon.trigger_dream().await {
+                        Ok(resp) => {
+                            let consolidated = resp["consolidated"].as_u64().unwrap_or(0);
+                            let pruned = resp["pruned"].as_u64().unwrap_or(0);
+                            let _ = tx.send(format!(
+                                "Dream cycle complete. Consolidated: {}, Pruned: {}",
+                                consolidated, pruned
+                            ));
+                        }
+                        Err(e) => { let _ = tx.send(format!("Dream cycle failed: {}", e)); }
+                    }
+                });
+                app.add_gojo_message("Dream cycle triggered. Results incoming...");
+            } else {
+                app.add_gojo_message("Daemon not connected. Use /daemon reconnect.");
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 fn handle_slash_command(app: &mut App, msg: &str) {
     let parts: Vec<&str> = msg.split_whitespace().collect();
     let cmd = parts.first().map(|s| *s).unwrap_or("");
@@ -582,15 +870,19 @@ fn handle_slash_command(app: &mut App, msg: &str) {
         "/status" => {
             let sidecar = format!("{:?}", app.sidecar_status);
             let c = &app.config.agents.claude;
+            let daemon_status = format!("Daemon: {} ({})",
+                if app.config.daemon.api_key.is_empty() { "not configured" } else { "configured" },
+                app.config.daemon.url
+            );
             app.add_gojo_message(&format!(
-                "LLM: {}\nEngram: {}\nModels: light={}, medium={}, heavy={}",
-                sidecar, app.config.engram.url,
+                "LLM: {}\nEngram: {}\n{}\nModels: light={}, medium={}, heavy={}",
+                sidecar, app.config.engram.url, daemon_status,
                 c.model_light, c.model_medium, c.model_heavy
             ));
         }
         "/help" => {
             app.add_gojo_message(
-                "Commands:\n  /model           - show/set model tiers\n  /status          - system status\n  /theme <name>    - switch theme\n  /clear           - clear chat (or Ctrl+L)\n  /quit            - exit"
+                "Commands:\n  /model             - show/set model tiers\n  /status            - system status\n  /theme <name>      - switch theme\n  /daemon            - daemon connection status\n  /daemon reconnect  - reconnect to daemon\n  /brain             - brain stats from daemon\n  /sessions          - list daemon sessions\n  /sessions kill <id> - kill a session\n  /dream             - trigger dream cycle\n  /clear             - clear chat (or Ctrl+L)\n  /quit              - exit"
             );
         }
         "/clear" => {

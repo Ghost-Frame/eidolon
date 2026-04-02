@@ -11,6 +11,7 @@ pub struct Config {
     pub tui: TuiConfig,
     pub brain: BrainConfig,
     pub session: SessionConfig,
+    pub daemon: DaemonConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +84,22 @@ pub struct SessionConfig {
     pub max_context_messages: u32,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DaemonConfig {
+    pub url: String,
+    pub api_key: String,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            url: "http://localhost:7700".to_string(),
+            api_key: String::new(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -93,6 +110,7 @@ impl Default for Config {
             tui: TuiConfig::default(),
             brain: BrainConfig::default(),
             session: SessionConfig::default(),
+            daemon: DaemonConfig::default(),
         }
     }
 }
@@ -204,5 +222,58 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("eidolon")
             .join("config.toml")
+    }
+
+    /// Fetch engram API key from credd at startup.
+    /// Only fetches if credd.agent_key is set and engram.api_key is empty.
+    pub async fn bootstrap_from_credd(&mut self) -> Result<(), String> {
+        if self.credd.agent_key.is_empty() {
+            return Ok(());
+        }
+        if !self.engram.api_key.is_empty() {
+            return Ok(());
+        }
+
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(|e| format!("http client: {}", e))?;
+
+        let url = format!("{}/secret/engram/api-key-eidolon-tui", self.credd.url);
+        let resp = http.get(&url)
+            .header("Authorization", format!("Bearer {}", self.credd.agent_key))
+            .send()
+            .await
+            .map_err(|e| format!("credd fetch: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("credd returned HTTP {}", resp.status()));
+        }
+
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| format!("credd parse: {}", e))?;
+
+        let key = body.get("value")
+            .and_then(|v| v.get("key"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "failed to extract key from credd response".to_string())?;
+
+        self.engram.api_key = key.to_string();
+        Ok(())
+    }
+
+    /// Warn if config file permissions are too open (unix only).
+    #[cfg(unix)]
+    pub fn check_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(Self::config_path()) {
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                eprintln!(
+                    "[eidolon-tui] WARNING: config.toml has mode {:o} -- recommend chmod 600",
+                    mode
+                );
+            }
+        }
     }
 }
