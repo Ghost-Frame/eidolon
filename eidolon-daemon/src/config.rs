@@ -186,6 +186,72 @@ fn default_gate_fail_mode() -> String {
     "open".to_string()
 }
 
+// --- Multi-user auth ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyEntry {
+    pub key: String,
+    pub user: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    pub api_keys: Vec<ApiKeyEntry>,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        AuthConfig { api_keys: Vec::new() }
+    }
+}
+
+impl AuthConfig {
+    pub fn has_keys(&self) -> bool {
+        !self.api_keys.is_empty()
+    }
+
+    pub fn first_key(&self) -> Option<&str> {
+        self.api_keys.first().map(|e| e.key.as_str())
+    }
+}
+
+// --- TLS config ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    pub cert_path: String,
+    pub key_path: String,
+}
+
+// --- Sessions config ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionsConfig {
+    #[serde(default)]
+    pub db_path: Option<String>,
+}
+
+impl Default for SessionsConfig {
+    fn default() -> Self {
+        SessionsConfig { db_path: None }
+    }
+}
+
+// --- Raw auth for TOML parsing (backwards compat) ---
+
+#[derive(Debug, Default, Deserialize)]
+struct RawAuthConfig {
+    api_key: Option<String>,
+    #[serde(default)]
+    api_keys: Vec<RawApiKeyEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawApiKeyEntry {
+    key: String,
+    user: String,
+}
+
 fn default_home() -> String {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -208,9 +274,12 @@ pub struct Config {
     pub servers: Vec<ServerEntry>,
     #[serde(default)]
     pub safety: SafetyConfig,
-    // Not stored in toml -- loaded from env var EIDOLON_API_KEY or toml [auth] section
-    #[serde(skip)]
-    pub api_key: String,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+    #[serde(default)]
+    pub sessions: SessionsConfig,
 }
 
 impl Default for Config {
@@ -225,7 +294,9 @@ impl Default for Config {
             agents,
             servers: Vec::new(),
             safety: SafetyConfig::default(),
-            api_key: String::new(),
+            auth: AuthConfig::default(),
+            tls: None,
+            sessions: SessionsConfig::default(),
         }
     }
 }
@@ -247,18 +318,53 @@ struct RawConfig {
     #[serde(default)]
     safety: SafetyConfig,
     #[serde(default)]
-    auth: AuthConfig,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct AuthConfig {
-    api_key: Option<String>,
+    auth: RawAuthConfig,
+    #[serde(default)]
+    tls: Option<TlsConfig>,
+    #[serde(default)]
+    sessions: SessionsConfig,
 }
 
 impl Config {
     pub fn default_path() -> String {
         let home = default_home();
         format!("{}/.config/eidolon/config.toml", home)
+    }
+
+    fn build_auth(raw_auth: RawAuthConfig) -> AuthConfig {
+        let mut api_keys: Vec<ApiKeyEntry> = Vec::new();
+
+        if let Ok(env_key) = std::env::var("EIDOLON_API_KEY") {
+            if !env_key.is_empty() {
+                api_keys.push(ApiKeyEntry {
+                    key: env_key,
+                    user: "default".to_string(),
+                });
+            }
+        }
+
+        for entry in raw_auth.api_keys {
+            if api_keys.iter().any(|e| e.key == entry.key) {
+                continue;
+            }
+            api_keys.push(ApiKeyEntry {
+                key: entry.key,
+                user: entry.user,
+            });
+        }
+
+        if api_keys.is_empty() {
+            if let Some(single_key) = raw_auth.api_key {
+                if !single_key.is_empty() {
+                    api_keys.push(ApiKeyEntry {
+                        key: single_key,
+                        user: "default".to_string(),
+                    });
+                }
+            }
+        }
+
+        AuthConfig { api_keys }
     }
 
     pub fn load(path: &str) -> Result<Self, String> {
@@ -268,16 +374,8 @@ impl Config {
         let raw: RawConfig = toml::from_str(&content)
             .map_err(|e| format!("failed to parse config {}: {}", path, e))?;
 
-        // API key: env var > config file > empty (will be filled by credd bootstrap)
-        let api_key = std::env::var("EIDOLON_API_KEY")
-            .ok()
-            .or(raw.auth.api_key)
-            .unwrap_or_default();
-
-        // Engram API key: env var > config file > None (will be filled by credd bootstrap)
+        let auth = Self::build_auth(raw.auth);
         let engram_api_key = std::env::var("ENGRAM_API_KEY").ok().or(raw.engram.api_key);
-
-        // Credd: env vars take precedence over config file
         let credd_url = std::env::var("CREDD_URL").unwrap_or(raw.credd.url);
         let credd_agent_key = std::env::var("CREDD_AGENT_KEY").ok().or(raw.credd.agent_key);
 
@@ -297,14 +395,15 @@ impl Config {
             agents: raw.agents,
             servers: raw.servers,
             safety: raw.safety,
-            api_key,
+            auth,
+            tls: raw.tls,
+            sessions: raw.sessions,
         })
     }
 
     pub fn load_or_default(path: Option<&str>) -> Result<Self, String> {
         let config_path = path.map(|s| s.to_string()).unwrap_or_else(Self::default_path);
 
-        // If config file doesn't exist, use defaults but still require API key
         let mut config = if std::path::Path::new(&config_path).exists() {
             Self::load(&config_path)?
         } else {
@@ -315,7 +414,12 @@ impl Config {
                 return Err("EIDOLON_API_KEY must not be empty".to_string());
             }
             let mut cfg = Config::default();
-            cfg.api_key = api_key;
+            cfg.auth = AuthConfig {
+                api_keys: vec![ApiKeyEntry {
+                    key: api_key,
+                    user: "default".to_string(),
+                }],
+            };
             cfg.engram.api_key = std::env::var("ENGRAM_API_KEY").ok();
             if let Ok(url) = std::env::var("CREDD_URL") {
                 cfg.credd.url = url;
@@ -324,7 +428,6 @@ impl Config {
             cfg
         };
 
-        // If agents map is empty, add default claude-code agent
         if config.agents.is_empty() {
             config.agents.insert("claude-code".to_string(), AgentConfig::default());
         }
@@ -332,8 +435,6 @@ impl Config {
         Ok(config)
     }
 
-    /// Fetch secrets from credd to populate api_key and engram.api_key.
-    /// Called after load. Requires credd.agent_key to be set.
     pub async fn bootstrap_from_credd(&mut self, http: &reqwest::Client) -> Result<(), String> {
         let agent_key = match &self.credd.agent_key {
             Some(k) if !k.is_empty() => k.clone(),
@@ -342,7 +443,6 @@ impl Config {
 
         let credd_url = &self.credd.url;
 
-        // Fetch Engram API key for Eidolon's dedicated instance
         match credd_fetch(http, credd_url, &agent_key, "engram", "api-key-eidolon").await {
             Ok(secret) => {
                 self.engram.api_key = Some(extract_api_key(&secret)?);
@@ -356,15 +456,23 @@ impl Config {
             }
         }
 
-        // Fetch Eidolon's own API key (for authenticating incoming requests)
         let instance_name = if self.server.port == 7700 { "hetzner" } else { "rocky" };
         match credd_fetch(http, credd_url, &agent_key, "eidolon", instance_name).await {
             Ok(secret) => {
-                self.api_key = extract_api_key(&secret)?;
+                let key = extract_api_key(&secret)?;
+                let existing = self.auth.api_keys.iter_mut().find(|e| e.user == "default");
+                if let Some(entry) = existing {
+                    entry.key = key;
+                } else {
+                    self.auth.api_keys.push(ApiKeyEntry {
+                        key,
+                        user: "default".to_string(),
+                    });
+                }
                 tracing::info!("bootstrapped eidolon api key from credd (instance={})", instance_name);
             }
             Err(e) => {
-                if self.api_key.is_empty() {
+                if !self.auth.has_keys() {
                     return Err(format!("credd: eidolon api key: {}", e));
                 }
                 tracing::warn!("credd eidolon key fetch failed (using config fallback): {}", e);

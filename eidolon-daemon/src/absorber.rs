@@ -16,7 +16,7 @@ fn store_request(state: &Arc<AppState>, url: &str, body: serde_json::Value) -> r
 pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
     let (task, output_buffer, status, corrections, agent, short_id) = {
         let sessions = state.sessions.lock().await;
-        match sessions.get_session(&session_id) {
+        match sessions.get_session(&session_id, None) {
             Some(s) => (
                 s.task.clone(),
                 s.output_buffer.clone(),

@@ -13,6 +13,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::AppState;
+use crate::UserIdentity;
 use crate::routes::{brain, gate, prompt, sessions, tasks};
 
 async fn health() -> Json<serde_json::Value> {
@@ -25,7 +26,7 @@ async fn health() -> Json<serde_json::Value> {
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     // Skip auth for health check unconditionally
@@ -42,6 +43,8 @@ async fn auth_middleware(
             .map(|ci| ci.0.ip().is_loopback())
             .unwrap_or(false);
         if is_local {
+            // Inject system identity for gate bypass
+            req.extensions_mut().insert(UserIdentity("system".to_string()));
             return Ok(next.run(req).await);
         }
         // Non-local gate requests fall through to normal auth below
@@ -59,22 +62,28 @@ async fn auth_middleware(
         ""
     };
 
-    // Timing-safe comparison via SHA-256 digest equality
-    if !constant_time_eq(provided_key.as_bytes(), state.config.api_key.as_bytes()) {
-        return Err((
+    // Match against all configured API keys using timing-safe comparison
+    let matched_user = state.config.auth.api_keys.iter().find_map(|entry| {
+        if constant_time_eq(provided_key.as_bytes(), entry.key.as_bytes()) {
+            Some(entry.user.clone())
+        } else {
+            None
+        }
+    });
+
+    match matched_user {
+        Some(user) => {
+            req.extensions_mut().insert(UserIdentity(user));
+            Ok(next.run(req).await)
+        }
+        None => Err((
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "unauthorized"})),
-        ));
+        )),
     }
-
-    Ok(next.run(req).await)
 }
 
 /// Constant-time byte comparison using SHA-256 digests.
-/// Hashing both inputs to a fixed-length output prevents length-leaking
-/// side-channels present in naive early-exit comparisons.
-/// black_box fences prevent the compiler from optimizing the XOR loop
-/// into an early-exit branch.
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let ha = Sha256::digest(a);
     let hb = Sha256::digest(b);
@@ -87,7 +96,6 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 pub fn build_router(state: Arc<AppState>) -> Router {
     let cors = if state.config.safety.cors_origins.is_empty() {
-        // Default: allow localhost origins matching configured host:port
         let origin = format!("http://{}:{}", state.config.server.host, state.config.server.port);
         CorsLayer::new()
             .allow_origin(origin.parse::<axum::http::HeaderValue>().unwrap())

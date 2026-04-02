@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -28,11 +29,26 @@ impl std::fmt::Display for SessionStatus {
     }
 }
 
+impl SessionStatus {
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s {
+            "pending" => SessionStatus::Pending,
+            "running" => SessionStatus::Running,
+            "completed" => SessionStatus::Completed,
+            "failed" => SessionStatus::Failed,
+            "killed" => SessionStatus::Killed,
+            "timed_out" => SessionStatus::TimedOut,
+            _ => SessionStatus::Failed,
+        }
+    }
+}
+
 pub struct Session {
     pub id: String,
     pub task: String,
     pub agent: String,
     pub model: String,
+    pub user: String,
     pub status: SessionStatus,
     pub created_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -46,13 +62,14 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(task: String, agent: String, model: String) -> Self {
+    pub fn new(task: String, agent: String, model: String, user: String) -> Self {
         let (tx, _) = broadcast::channel(1024);
         Session {
             id: Uuid::new_v4().to_string(),
             task,
             agent,
             model,
+            user,
             status: SessionStatus::Pending,
             created_at: Utc::now(),
             ended_at: None,
@@ -68,7 +85,6 @@ impl Session {
 
     pub fn append_output(&mut self, line: String) {
         self.output_buffer.push(line.clone());
-        // Broadcast -- ignore send errors (no active subscribers is fine)
         let _ = self.output_tx.send(line);
     }
 
@@ -78,6 +94,7 @@ impl Session {
             "task": self.task,
             "agent": self.agent,
             "model": self.model,
+            "user": self.user,
             "status": self.status,
             "created_at": self.created_at.to_rfc3339(),
             "ended_at": self.ended_at.map(|t| t.to_rfc3339()),
@@ -97,33 +114,157 @@ impl Session {
 
 pub struct SessionManager {
     sessions: HashMap<String, Session>,
+    db: Option<Connection>,
 }
 
 impl SessionManager {
-    pub fn new() -> Self {
+    pub fn new(db_path: Option<&str>) -> Self {
+        let db = db_path.and_then(|path| {
+            match Connection::open(path) {
+                Ok(conn) => {
+                    if let Err(e) = Self::init_db(&conn) {
+                        tracing::warn!("session db init failed, falling back to in-memory: {}", e);
+                        return None;
+                    }
+                    tracing::info!("session db opened at {}", path);
+                    Some(conn)
+                }
+                Err(e) => {
+                    tracing::warn!("session db open failed ({}), falling back to in-memory: {}", path, e);
+                    None
+                }
+            }
+        });
+
         SessionManager {
             sessions: HashMap::new(),
+            db,
         }
     }
 
-    pub fn create_session(&mut self, task: String, agent: String, model: String) -> String {
-        let session = Session::new(task, agent, model);
+    fn init_db(conn: &Connection) -> Result<(), String> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                task TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                model TEXT NOT NULL,
+                user TEXT NOT NULL DEFAULT 'default',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                ended_at TEXT,
+                exit_code INTEGER,
+                pid INTEGER,
+                corrections INTEGER DEFAULT 0,
+                engram_stores INTEGER DEFAULT 0,
+                error TEXT
+            );
+            CREATE TABLE IF NOT EXISTS session_output (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL REFERENCES sessions(id),
+                line TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_output_sid ON session_output(session_id);"
+        ).map_err(|e| format!("db init: {}", e))
+    }
+
+    pub fn create_session(&mut self, task: String, agent: String, model: String, user: String) -> String {
+        let session = Session::new(task, agent, model, user);
         let id = session.id.clone();
+
+        // Insert into DB
+        if let Some(ref conn) = self.db {
+            if let Err(e) = conn.execute(
+                "INSERT INTO sessions (id, task, agent, model, user, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    session.id,
+                    session.task,
+                    session.agent,
+                    session.model,
+                    session.user,
+                    session.status.to_string(),
+                    session.created_at.to_rfc3339(),
+                ],
+            ) {
+                tracing::warn!("db insert session failed: {}", e);
+            }
+        }
+
         self.sessions.insert(id.clone(), session);
         id
     }
 
-    pub fn get_session(&self, id: &str) -> Option<&Session> {
-        self.sessions.get(id)
+    pub fn append_output(&mut self, session_id: &str, line: String) {
+        // Insert into DB
+        if let Some(ref conn) = self.db {
+            let _ = conn.execute(
+                "INSERT INTO session_output (session_id, line) VALUES (?1, ?2)",
+                params![session_id, &line],
+            );
+        }
+
+        // Broadcast + buffer in-memory
+        if let Some(session) = self.sessions.get_mut(session_id) {
+            session.append_output(line);
+        }
     }
 
-    pub fn get_session_mut(&mut self, id: &str) -> Option<&mut Session> {
-        self.sessions.get_mut(id)
+    /// Get session by id. If user is Some, returns None when user does not match (404 not 403).
+    pub fn get_session(&self, id: &str, user: Option<&str>) -> Option<&Session> {
+        if let Some(s) = self.sessions.get(id) {
+            if let Some(u) = user {
+                if s.user != u {
+                    return None;
+                }
+            }
+            return Some(s);
+        }
+        None
     }
 
-    pub fn kill_session(&mut self, id: &str) -> Result<(), String> {
+    /// Get mutable session by id. If user is Some, returns None when user does not match.
+    pub fn get_session_mut(&mut self, id: &str, user: Option<&str>) -> Option<&mut Session> {
+        if let Some(s) = self.sessions.get_mut(id) {
+            if let Some(u) = user {
+                if s.user != u {
+                    return None;
+                }
+            }
+            return Some(s);
+        }
+        None
+    }
+
+    /// Sync session fields to DB after in-memory mutation.
+    pub fn sync_session_to_db(&self, id: &str) {
+        let Some(ref conn) = self.db else { return };
+        let Some(s) = self.sessions.get(id) else { return };
+        let ended_at = s.ended_at.map(|t| t.to_rfc3339());
+        let _ = conn.execute(
+            "UPDATE sessions SET status = ?1, ended_at = ?2, exit_code = ?3, pid = ?4, corrections = ?5, engram_stores = ?6, error = ?7 WHERE id = ?8",
+            params![
+                s.status.to_string(),
+                ended_at,
+                s.exit_code,
+                s.pid,
+                s.corrections as i64,
+                s.engram_stores as i64,
+                s.error,
+                id,
+            ],
+        );
+    }
+
+    pub fn kill_session(&mut self, id: &str, user: Option<&str>) -> Result<(), String> {
         let session = self.sessions.get_mut(id)
             .ok_or_else(|| format!("session {} not found", id))?;
+
+        if let Some(u) = user {
+            if session.user != u {
+                return Err(format!("session {} not found", id));
+            }
+        }
 
         if session.status != SessionStatus::Running && session.status != SessionStatus::Pending {
             return Err(format!("session {} is not running (status: {})", id, session.status));
@@ -146,22 +287,77 @@ impl SessionManager {
 
         session.status = SessionStatus::Killed;
         session.ended_at = Some(Utc::now());
+        self.sync_session_to_db(id);
         Ok(())
     }
 
-    pub fn list_active(&self) -> Vec<serde_json::Value> {
+    pub fn list_active(&self, user: &str) -> Vec<serde_json::Value> {
         self.sessions.values()
+            .filter(|s| s.user == user)
             .filter(|s| s.status == SessionStatus::Running || s.status == SessionStatus::Pending)
             .map(|s| s.to_json())
             .collect()
     }
 
-    pub fn list_all(&self) -> Vec<serde_json::Value> {
-        let mut all: Vec<_> = self.sessions.values().map(|s| s.to_json()).collect();
+    pub fn list_all(&self, user: &str) -> Vec<serde_json::Value> {
+        // In-memory sessions for this user
+        let mut all: Vec<_> = self.sessions.values()
+            .filter(|s| s.user == user)
+            .map(|s| s.to_json())
+            .collect();
+
+        // Add historical sessions from DB that are not in memory
+        if let Some(ref conn) = self.db {
+            let in_memory_ids: std::collections::HashSet<&str> = self.sessions.keys().map(|k| k.as_str()).collect();
+
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT id, task, agent, model, user, status, created_at, ended_at, exit_code, pid, corrections, engram_stores, error FROM sessions WHERE user = ?1 ORDER BY created_at DESC"
+            ) {
+                if let Ok(rows) = stmt.query_map(params![user], |row| {
+                    let id: String = row.get(0)?;
+                    let task: String = row.get(1)?;
+                    let agent: String = row.get(2)?;
+                    let model: String = row.get(3)?;
+                    let user_col: String = row.get(4)?;
+                    let status: String = row.get(5)?;
+                    let created_at: String = row.get(6)?;
+                    let ended_at: Option<String> = row.get(7)?;
+                    let exit_code: Option<i32> = row.get(8)?;
+                    let pid: Option<u32> = row.get(9)?;
+                    let corrections: i64 = row.get(10)?;
+                    let engram_stores: i64 = row.get(11)?;
+                    let error: Option<String> = row.get(12)?;
+                    Ok(serde_json::json!({
+                        "id": id,
+                        "task": task,
+                        "agent": agent,
+                        "model": model,
+                        "user": user_col,
+                        "status": status,
+                        "created_at": created_at,
+                        "ended_at": ended_at,
+                        "exit_code": exit_code,
+                        "pid": pid,
+                        "corrections": corrections,
+                        "engram_stores": engram_stores,
+                        "error": error,
+                        "output_lines": 0,
+                    }))
+                }) {
+                    for row_result in rows.flatten() {
+                        let id = row_result["id"].as_str().unwrap_or("");
+                        if !in_memory_ids.contains(id) {
+                            all.push(row_result);
+                        }
+                    }
+                }
+            }
+        }
+
         all.sort_by(|a, b| {
             let a_ts = a["created_at"].as_str().unwrap_or("");
             let b_ts = b["created_at"].as_str().unwrap_or("");
-            b_ts.cmp(a_ts) // newest first
+            b_ts.cmp(a_ts)
         });
         all
     }

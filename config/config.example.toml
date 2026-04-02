@@ -20,10 +20,32 @@ url = "http://localhost:4200"
 url = "http://127.0.0.1:4400"
 # agent_key = "your-credd-agent-key"  # or set CREDD_AGENT_KEY env var
 
-# API key for authenticating incoming requests to Eidolon
+# --- Authentication ---
+# Option 1: Single API key (backwards compatible)
 # Set via EIDOLON_API_KEY env var or uncomment below:
 # [auth]
 # api_key = "your-eidolon-api-key"
+
+# Option 2: Multi-user API keys
+# Each key maps to a user identity. Sessions are isolated per user.
+# [[auth.api_keys]]
+# key = "abc123"
+# user = "zan"
+#
+# [[auth.api_keys]]
+# key = "def456"
+# user = "agent-1"
+
+# --- TLS (optional) ---
+# When configured, daemon serves HTTPS. Otherwise plain HTTP.
+# [tls]
+# cert_path = "/path/to/cert.pem"
+# key_path = "/path/to/key.pem"
+
+# --- Session persistence (optional) ---
+# When db_path is set, sessions survive daemon restarts.
+# [sessions]
+# db_path = "/path/to/eidolon/sessions.db"
 
 [safety]
 rules = [

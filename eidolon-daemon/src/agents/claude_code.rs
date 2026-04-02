@@ -216,7 +216,7 @@ pub async fn run_claude_code(
     let pid = child.id();
     {
         let mut sessions = state.sessions.lock().await;
-        if let Some(s) = sessions.get_session_mut(session_id) {
+        if let Some(s) = sessions.get_session_mut(session_id, None) {
             s.pid = pid;
         }
     }
@@ -231,9 +231,7 @@ pub async fn run_claude_code(
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
             let mut sessions = state_stdout.sessions.lock().await;
-            if let Some(s) = sessions.get_session_mut(&sid_stdout) {
-                s.append_output(line);
-            }
+            sessions.append_output(&sid_stdout, line);
         }
     });
 
@@ -245,9 +243,7 @@ pub async fn run_claude_code(
         while let Ok(Some(line)) = reader.next_line().await {
             tracing::debug!("claude stderr [{}]: {}", sid_stderr, line);
             let mut sessions = state_stderr.sessions.lock().await;
-            if let Some(s) = sessions.get_session_mut(&sid_stderr) {
-                s.append_output(format!("[stderr] {}", line));
-            }
+            sessions.append_output(&sid_stderr, format!("[stderr] {}", line));
         }
     });
 
@@ -269,10 +265,11 @@ pub async fn run_claude_code(
             // Set session status to TimedOut
             {
                 let mut sessions = state.sessions.lock().await;
-                if let Some(s) = sessions.get_session_mut(session_id) {
+                if let Some(s) = sessions.get_session_mut(session_id, None) {
                     s.status = crate::session::SessionStatus::TimedOut;
                     s.ended_at = Some(chrono::Utc::now());
                 }
+                sessions.sync_session_to_db(session_id);
             }
             // Join readers, cleanup, absorb
             let _ = stdout_task.await;
@@ -295,7 +292,7 @@ pub async fn run_claude_code(
     // Absorb session output to Engram
     {
         let mut sessions = state.sessions.lock().await;
-        if let Some(s) = sessions.get_session_mut(session_id) {
+        if let Some(s) = sessions.get_session_mut(session_id, None) {
             let code = exit_status.code().unwrap_or(-1);
             if code == 0 {
                 s.status = crate::session::SessionStatus::Completed;
@@ -305,6 +302,7 @@ pub async fn run_claude_code(
             s.exit_code = Some(code);
             s.ended_at = Some(chrono::Utc::now());
         }
+        sessions.sync_session_to_db(session_id);
     }
     let absorb_state = Arc::clone(state);
     let absorb_sid = session_id.to_string();

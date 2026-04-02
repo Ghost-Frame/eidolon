@@ -83,13 +83,14 @@ pub async fn gate_check(
 
     if is_engram_store && session_id != "unknown" {
         let mut sessions = state.sessions.lock().await;
-        if let Some(session) = sessions.get_session_mut(session_id) {
+        if let Some(session) = sessions.get_session_mut(session_id, None) {
             session.engram_stores += 1;
             tracing::info!(
                 "gate: engram store tracked session={} total={}",
                 session_id, session.engram_stores
             );
         }
+        sessions.sync_session_to_db(session_id);
     }
 
     // Fast path: read-only tools always allowed
@@ -436,7 +437,7 @@ pub async fn gate_complete(
     }
 
     let sessions = state.sessions.lock().await;
-    match sessions.get_session(&input.session_id) {
+    match sessions.get_session(&input.session_id, None) {
         None => {
             tracing::warn!("gate/complete: blocked -- session not found id={}", input.session_id);
             Json(json!({

@@ -7,32 +7,34 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::AppState;
+use crate::UserIdentity;
 use crate::session::SessionStatus;
 
 pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<UserIdentity>,
 ) -> Json<serde_json::Value> {
     let sessions = state.sessions.lock().await;
     Json(json!({
         "ok": true,
-        "active": sessions.list_active(),
-        "all": sessions.list_all(),
+        "active": sessions.list_active(&user.0),
+        "all": sessions.list_all(&user.0),
     }))
 }
 
 pub async fn stream_session(
     State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<UserIdentity>,
     Path(id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> axum::response::Response {
-    ws.on_upgrade(move |socket| handle_ws(socket, state, id))
+    ws.on_upgrade(move |socket| handle_ws(socket, state, id, user.0))
 }
 
-async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: String) {
-    // Get buffered output and subscribe to broadcast
+async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: String, user: String) {
     let (buffered, mut rx, status) = {
         let sessions = state.sessions.lock().await;
-        match sessions.get_session(&session_id) {
+        match sessions.get_session(&session_id, Some(&user)) {
             Some(s) => {
                 let buf = s.output_buffer.clone();
                 let rx = s.output_tx.subscribe();
@@ -47,7 +49,6 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: Stri
         }
     };
 
-    // Send buffered lines first
     for line in buffered {
         let msg = json!({"type": "output", "data": line});
         if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
@@ -55,11 +56,9 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: Stri
         }
     }
 
-    // If session already ended, send final status and close
-    
     if status != SessionStatus::Pending && status != SessionStatus::Running {
         let sessions = state.sessions.lock().await;
-        if let Some(s) = sessions.get_session(&session_id) {
+        if let Some(s) = sessions.get_session(&session_id, Some(&user)) {
             let end_msg = json!({
                 "type": "session_end",
                 "status": s.status,
@@ -70,7 +69,6 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: Stri
         return;
     }
 
-    // Stream live output
     loop {
         match rx.recv().await {
             Ok(line) => {
@@ -80,9 +78,8 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>, session_id: Stri
                 }
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                // Channel closed -- session ended
                 let sessions = state.sessions.lock().await;
-                if let Some(s) = sessions.get_session(&session_id) {
+                if let Some(s) = sessions.get_session(&session_id, Some(&user)) {
                     let end_msg = json!({
                         "type": "session_end",
                         "status": s.status,

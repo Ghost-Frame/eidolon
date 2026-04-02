@@ -17,9 +17,10 @@ pub async fn run_agent(
     // Mark session as Running
     {
         let mut sessions = state.sessions.lock().await;
-        if let Some(s) = sessions.get_session_mut(&session_id) {
+        if let Some(s) = sessions.get_session_mut(&session_id, None) {
             s.status = SessionStatus::Running;
         }
+        sessions.sync_session_to_db(&session_id);
     }
 
     // Generate living prompt
@@ -35,11 +36,13 @@ pub async fn run_agent(
                 Err(e) => {
                     tracing::error!("claude-code session {} failed: {}", session_id, e);
                     let mut sessions = state.sessions.lock().await;
-                    if let Some(s) = sessions.get_session_mut(&session_id) {
+                    if let Some(s) = sessions.get_session_mut(&session_id, None) {
                         s.status = SessionStatus::Failed;
                         s.error = Some(e);
                         s.ended_at = Some(Utc::now());
                     }
+                    sessions.sync_session_to_db(&session_id);
+                    drop(sessions);
                     absorb_session(Arc::clone(&state), session_id).await;
                     return;
                 }
@@ -48,11 +51,13 @@ pub async fn run_agent(
         _ => {
             tracing::error!("unknown agent: {}", agent_name);
             let mut sessions = state.sessions.lock().await;
-            if let Some(s) = sessions.get_session_mut(&session_id) {
+            if let Some(s) = sessions.get_session_mut(&session_id, None) {
                 s.status = SessionStatus::Failed;
                 s.error = Some(format!("unknown agent: {}", agent_name));
                 s.ended_at = Some(Utc::now());
             }
+            sessions.sync_session_to_db(&session_id);
+            drop(sessions);
             absorb_session(Arc::clone(&state), session_id).await;
             return;
         }
@@ -61,7 +66,7 @@ pub async fn run_agent(
     // Update session with exit result
     {
         let mut sessions = state.sessions.lock().await;
-        if let Some(s) = sessions.get_session_mut(&session_id) {
+        if let Some(s) = sessions.get_session_mut(&session_id, None) {
             s.exit_code = exit_code;
             s.ended_at = Some(Utc::now());
             s.status = match exit_code {
@@ -69,6 +74,7 @@ pub async fn run_agent(
                 _ => SessionStatus::Failed,
             };
         }
+        sessions.sync_session_to_db(&session_id);
     }
 
     absorb_session(Arc::clone(&state), session_id).await;

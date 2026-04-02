@@ -16,6 +16,11 @@ use scrubbing::ScrubRegistry;
 use session::SessionManager;
 use eidolon_lib::brain::Brain;
 
+/// User identity extracted from auth middleware.
+/// Injected into request extensions after API key validation.
+#[derive(Debug, Clone)]
+pub struct UserIdentity(pub String);
+
 pub struct AppState {
     pub brain: Arc<Mutex<Brain>>,
     pub sessions: Arc<Mutex<SessionManager>>,
