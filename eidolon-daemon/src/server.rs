@@ -15,7 +15,7 @@ use tower_http::trace::TraceLayer;
 use crate::AppState;
 use crate::UserIdentity;
 use crate::audit::AuditRecord;
-use crate::routes::{audit as audit_route, brain, gate, prompt, sessions, tasks};
+use crate::routes::{activity, audit as audit_route, brain, gate, prompt, sessions, tasks};
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({
@@ -208,6 +208,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route("/activity", post(activity::post_activity))
         .route("/task", post(tasks::submit_task))
         .route("/task/{id}", get(tasks::task_status))
         .route("/task/{id}/kill", post(tasks::kill_task))

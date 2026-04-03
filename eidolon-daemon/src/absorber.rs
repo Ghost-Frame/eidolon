@@ -16,7 +16,7 @@ fn store_request(state: &Arc<AppState>, url: &str, body: serde_json::Value) -> r
 
 /// Absorb a memory directly into the in-process brain.
 /// Gets embedding from Engram /embed, constructs BrainMemory, calls Brain::absorb_new().
-async fn absorb_to_brain(
+pub async fn absorb_to_brain(
     state: &Arc<AppState>,
     content: &str,
     category: &str,
