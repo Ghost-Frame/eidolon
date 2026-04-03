@@ -60,6 +60,9 @@ pub async fn post_activity(
     }
 
     let engram_url = &state.config.engram.url;
+    let axon_base = state.config.engram.axon_url.as_deref()
+        .map(|u| u.trim_end_matches("/publish").to_string())
+        .unwrap_or_else(|| format!("{}/axon", engram_url));
     let engram_key = state.config.engram.api_key.clone().unwrap_or_default();
     let http = &state.http_client;
     let project = req.project.as_deref().unwrap_or("unknown");
@@ -80,7 +83,7 @@ pub async fn post_activity(
     let axon_type = req.action.clone();
 
     let axon_fut = fanout_axon(
-        http, engram_url, &engram_key,
+        http, &axon_base, &engram_key,
         &req.agent, axon_channel, &axon_type, &summary_short, &req.details,
     );
 
@@ -282,7 +285,7 @@ async fn update_chiasm_task(
 
 async fn fanout_axon(
     http: &reqwest::Client,
-    engram_url: &str,
+    axon_base: &str,
     engram_key: &str,
     agent: &str,
     channel: &str,
@@ -290,7 +293,7 @@ async fn fanout_axon(
     summary: &str,
     details: &Option<Value>,
 ) -> String {
-    let url = format!("{}/axon/publish", engram_url);
+    let url = format!("{}/publish", axon_base);
     let mut payload = json!({
         "agent": agent,
         "summary": summary,
