@@ -33,6 +33,7 @@ regex = "1"
 tokio-stream = "0.1"
 sha2 = "0.11.0"
 which = "7"
+dashmap = "6"
 rusqlite = { version = "0.33", features = ["bundled"] }
 tokio-rustls = "0.26"
 rustls = "0.23"

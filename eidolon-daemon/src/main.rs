@@ -73,12 +73,42 @@ async fn main() {
     let session_db_path = config.sessions.db_path.clone();
     let session_manager = SessionManager::new(session_db_path.as_deref());
 
+    // Init rate limiter (optional)
+    let rate_limiter = config.rate_limit.as_ref().map(|rl| {
+        tracing::info!(
+            "rate limiting enabled: {} req/min + {} burst",
+            rl.requests_per_minute,
+            rl.burst
+        );
+        Arc::new(eidolon_daemon::rate_limit::RateLimiter::new(
+            rl.requests_per_minute,
+            rl.burst,
+        ))
+    });
+
+    // Init audit log (optional)
+    let audit_log = match config.audit.as_ref().and_then(|a| a.db_path.as_ref()) {
+        Some(db_path) => match eidolon_daemon::audit::AuditLog::open(db_path) {
+            Ok(log) => {
+                tracing::info!("audit logging enabled: {}", db_path);
+                Some(Arc::new(log))
+            }
+            Err(e) => {
+                tracing::warn!("audit logging disabled (init failed): {}", e);
+                None
+            }
+        },
+        None => None,
+    };
+
     let state = Arc::new(AppState {
         brain: Arc::new(Mutex::new(brain)),
         sessions: Arc::new(Mutex::new(session_manager)),
         http_client,
         config,
         scrub_registry: Arc::new(Mutex::new(ScrubRegistry::new())),
+        rate_limiter,
+        audit_log,
     });
 
     // Spawn dream cycle background task
@@ -101,6 +131,19 @@ async fn main() {
                 }
             });
         }
+    }
+
+    // Spawn rate limiter cleanup task (prune expired entries every 5 minutes)
+    if let Some(ref limiter) = state.rate_limiter {
+        let limiter = Arc::clone(limiter);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                limiter.prune_expired();
+            }
+        });
     }
 
     let bind_addr = format!("{}:{}", state.config.server.host, state.config.server.port);

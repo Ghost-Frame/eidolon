@@ -76,6 +76,17 @@ protected_services = ["engram"]
 # ssh_port = 22
 # notes = "Mirrors production config."
 
+# --- Rate limiting (optional) ---
+# Per-user sliding window. Disabled when section is absent.
+# [rate_limit]
+# requests_per_minute = 120
+# burst = 20
+
+# --- Audit logging (optional) ---
+# SQLite-backed request audit log. Disabled when section is absent.
+# [audit]
+# db_path = "/path/to/eidolon/audit.db"
+
 [agents.claude-code]
 command = "claude"
 args = ["-p", "--output-format", "stream-json"]

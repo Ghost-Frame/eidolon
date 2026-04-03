@@ -280,7 +280,7 @@ Experimental. Phase 3.5 -- TUI stabilization and daemon integration.
 
 Working: action gate, living prompts, agent wrapping for Claude Code, session absorption, neural recall, dreaming, evolution, TUI with local LLM routing, daemon slash commands (/daemon, /brain, /sessions, /dream), 165+ tests including 72 security pentest tests. The gate is deployed and catching mistakes in live sessions.
 
-Multi-user auth (per-user API keys with session isolation), optional TLS (native rustls), and persistent sessions (SQLite-backed) are implemented. Agent registry is single-instance. Rate limiting and audit logging are not yet implemented.
+Multi-user auth (per-user API keys with session isolation), optional TLS (native rustls), persistent sessions (SQLite-backed), per-user rate limiting (sliding window), and audit logging (SQLite-backed with query API) are implemented. Agent registry is single-instance.
 
 ---
 

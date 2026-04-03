@@ -14,7 +14,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::AppState;
 use crate::UserIdentity;
-use crate::routes::{brain, gate, prompt, sessions, tasks};
+use crate::audit::AuditRecord;
+use crate::routes::{audit as audit_route, brain, gate, prompt, sessions, tasks};
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({
@@ -94,6 +95,100 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     std::hint::black_box(result) == 0 && a.len() == b.len()
 }
 
+async fn rate_limit_middleware(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    // Skip if rate limiting is disabled
+    let limiter = match &state.rate_limiter {
+        Some(l) => l,
+        None => return Ok(next.run(req).await),
+    };
+
+    // Skip for health checks
+    if req.uri().path() == "/health" {
+        return Ok(next.run(req).await);
+    }
+
+    // Skip for system user (gate bypass from localhost)
+    let user = req.extensions().get::<UserIdentity>().map(|u| u.0.clone());
+    if user.as_deref() == Some("system") {
+        return Ok(next.run(req).await);
+    }
+
+    let user_key = user.unwrap_or_else(|| "anonymous".to_string());
+
+    match limiter.check(&user_key) {
+        Ok(info) => {
+            let mut response = next.run(req).await;
+            let headers = response.headers_mut();
+            headers.insert("X-RateLimit-Limit", info.limit.into());
+            headers.insert("X-RateLimit-Remaining", info.remaining.into());
+            headers.insert("X-RateLimit-Reset", info.reset_secs.into());
+            Ok(response)
+        }
+        Err(exceeded) => {
+            Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({
+                    "error": "rate limit exceeded",
+                    "retry_after_secs": exceeded.retry_after_secs,
+                    "limit": exceeded.limit,
+                })),
+            ))
+        }
+    }
+}
+
+async fn audit_middleware(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    // Skip if audit is disabled
+    let audit_log = match &state.audit_log {
+        Some(a) => a.clone(),
+        None => return next.run(req).await,
+    };
+
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
+    let source_ip = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0.to_string())
+        .unwrap_or_default();
+    let user_agent = req
+        .headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let user = req
+        .extensions()
+        .get::<UserIdentity>()
+        .map(|u| u.0.clone())
+        .unwrap_or_else(|| "anonymous".to_string());
+
+    let response = next.run(req).await;
+
+    let status_code = response.status().as_u16();
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    audit_log.record(AuditRecord {
+        timestamp,
+        user,
+        method,
+        path,
+        status_code,
+        source_ip,
+        user_agent,
+    });
+
+    response
+}
+
 pub fn build_router(state: Arc<AppState>) -> Router {
     let cors = if state.config.safety.cors_origins.is_empty() {
         let origin = format!("http://{}:{}", state.config.server.host, state.config.server.port);
@@ -124,6 +219,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/gate/check", post(gate::gate_check))
         .route("/gate/complete", post(gate::gate_complete))
         .route("/prompt/generate", post(prompt::generate_prompt))
+        .route("/audit", get(audit_route::get_audit_log))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            audit_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            rate_limit_middleware,
+        ))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware,

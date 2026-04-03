@@ -237,6 +237,38 @@ impl Default for SessionsConfig {
     }
 }
 
+// --- Rate limiting config ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    #[serde(default = "default_rpm")]
+    pub requests_per_minute: u32,
+    #[serde(default = "default_burst")]
+    pub burst: u32,
+}
+
+fn default_rpm() -> u32 {
+    120
+}
+
+fn default_burst() -> u32 {
+    20
+}
+
+// --- Audit logging config ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditConfig {
+    #[serde(default)]
+    pub db_path: Option<String>,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        AuditConfig { db_path: None }
+    }
+}
+
 // --- Raw auth for TOML parsing (backwards compat) ---
 
 #[derive(Debug, Default, Deserialize)]
@@ -280,6 +312,10 @@ pub struct Config {
     pub tls: Option<TlsConfig>,
     #[serde(default)]
     pub sessions: SessionsConfig,
+    #[serde(default)]
+    pub rate_limit: Option<RateLimitConfig>,
+    #[serde(default)]
+    pub audit: Option<AuditConfig>,
 }
 
 impl Default for Config {
@@ -297,6 +333,8 @@ impl Default for Config {
             auth: AuthConfig::default(),
             tls: None,
             sessions: SessionsConfig::default(),
+            rate_limit: None,
+            audit: None,
         }
     }
 }
@@ -323,6 +361,10 @@ struct RawConfig {
     tls: Option<TlsConfig>,
     #[serde(default)]
     sessions: SessionsConfig,
+    #[serde(default)]
+    rate_limit: Option<RateLimitConfig>,
+    #[serde(default)]
+    audit: Option<AuditConfig>,
 }
 
 impl Config {
@@ -398,6 +440,8 @@ impl Config {
             auth,
             tls: raw.tls,
             sessions: raw.sessions,
+            rate_limit: raw.rate_limit,
+            audit: raw.audit,
         })
     }
 

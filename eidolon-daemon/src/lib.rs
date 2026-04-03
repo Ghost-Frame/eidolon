@@ -1,7 +1,9 @@
 pub mod absorber;
 pub mod agents;
+pub mod audit;
 pub mod config;
 pub mod prompt;
+pub mod rate_limit;
 pub mod routes;
 pub mod scrubbing;
 pub mod secrets;
@@ -27,4 +29,6 @@ pub struct AppState {
     pub config: Config,
     pub http_client: reqwest::Client,
     pub scrub_registry: Arc<Mutex<ScrubRegistry>>,
+    pub rate_limiter: Option<Arc<rate_limit::RateLimiter>>,
+    pub audit_log: Option<Arc<audit::AuditLog>>,
 }
