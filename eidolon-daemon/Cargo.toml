@@ -35,6 +35,7 @@ sha2 = "0.11.0"
 which = "7"
 dashmap = "6"
 rusqlite = { version = "0.33", features = ["bundled"] }
+ndarray = { version = "0.16", features = ["serde"] }
 tokio-rustls = "0.26"
 rustls = "0.23"
 rustls-pemfile = "2"

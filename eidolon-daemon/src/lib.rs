@@ -32,3 +32,25 @@ pub struct AppState {
     pub rate_limiter: Option<Arc<rate_limit::RateLimiter>>,
     pub audit_log: Option<Arc<audit::AuditLog>>,
 }
+
+/// Get a 1024-dim embedding from Engram's /embed endpoint.
+pub async fn embed_text(
+    http: &reqwest::Client,
+    engram_url: &str,
+    engram_key: Option<&str>,
+    text: &str,
+) -> Option<Vec<f32>> {
+    let url = format!("{}/embed", engram_url);
+    let mut req = http
+        .post(&url)
+        .json(&serde_json::json!({"text": text}));
+    if let Some(key) = engram_key {
+        req = req.header("Authorization", format!("Bearer {}", key));
+    }
+    let resp = req.send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    serde_json::from_value(body["embedding"].clone()).ok()
+}

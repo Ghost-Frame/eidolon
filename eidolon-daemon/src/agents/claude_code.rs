@@ -271,15 +271,9 @@ pub async fn run_claude_code(
                 }
                 sessions.sync_session_to_db(session_id);
             }
-            // Join readers, cleanup, absorb
+            // Join readers, cleanup
             let _ = stdout_task.await;
             let _ = stderr_task.await;
-            // Absorb session before cleanup
-            let absorb_state = Arc::clone(state);
-            let absorb_sid = session_id.to_string();
-            tokio::spawn(async move {
-                crate::absorber::absorb_session(absorb_state, absorb_sid).await;
-            });
             let _ = tokio::fs::remove_dir_all(&session_dir).await;
             return Ok(-1);
         }
@@ -304,11 +298,6 @@ pub async fn run_claude_code(
         }
         sessions.sync_session_to_db(session_id);
     }
-    let absorb_state = Arc::clone(state);
-    let absorb_sid = session_id.to_string();
-    tokio::spawn(async move {
-        crate::absorber::absorb_session(absorb_state, absorb_sid).await;
-    });
 
     // Cleanup temp dir
     let _ = tokio::fs::remove_dir_all(&session_dir).await;

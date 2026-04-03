@@ -509,6 +509,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "ndarray",
  "regex",
  "reqwest",
  "rusqlite",

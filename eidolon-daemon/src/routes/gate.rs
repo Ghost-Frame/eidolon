@@ -8,6 +8,95 @@ use std::sync::Arc;
 use crate::AppState;
 use crate::config::{Config, ServerEntry};
 use crate::secrets::{self, CreddClient};
+use crate::UserIdentity;
+
+/// Query the brain to validate an action. Returns (action, message, memory_ids).
+/// The brain provides context-aware validation beyond static rules.
+async fn brain_validate_action(
+    state: &AppState,
+    command: &str,
+    tool_name: &str,
+) -> Option<(String, String, Vec<i64>)> {
+    // Only validate commands that do something -- skip empty/read-only
+    if command.trim().is_empty() {
+        return None;
+    }
+
+    let query_text = format!("{} command: {}", tool_name, command);
+    let embedding = crate::embed_text(
+        &state.http_client,
+        &state.config.engram.url,
+        state.config.engram.api_key.as_deref(),
+        &query_text,
+    ).await?;
+
+    if embedding.is_empty() {
+        return None;
+    }
+
+    let mut brain = state.brain.lock().await;
+    let result = brain.query(&embedding, 5, 8.0, 2);
+    let memory_ids: Vec<i64> = result.activated.iter().map(|m| m.id).collect();
+
+    // Check if any highly-activated memory suggests this action is problematic
+    for mem in &result.activated {
+        if mem.activation < 0.5 {
+            break; // Below confidence threshold
+        }
+        let content_lower = mem.content.to_lowercase();
+        // Brain knows this is a blocked/dangerous pattern
+        if (content_lower.contains("blocked") || content_lower.contains("do not")
+            || content_lower.contains("never") || content_lower.contains("forbidden")
+            || content_lower.contains("not allowed"))
+            && command_matches_memory(command, &mem.content)
+        {
+            return Some((
+                "block".to_string(),
+                format!("Brain recall (activation {:.2}): {}", mem.activation, mem.content.chars().take(200).collect::<String>()),
+                memory_ids,
+            ));
+        }
+
+        // Brain has enrichment context
+        if mem.activation > 0.6 {
+            let preview = mem.content.chars().take(300).collect::<String>();
+            return Some((
+                "enrich".to_string(),
+                format!("Brain context: {}", preview),
+                memory_ids,
+            ));
+        }
+    }
+
+    // Check contradictions -- if the brain resolved a conflict about this topic, share it
+    if !result.contradictions.is_empty() {
+        let c = &result.contradictions[0];
+        if let Some(winner) = result.activated.iter().find(|m| m.id == c.winner_id) {
+            return Some((
+                "enrich".to_string(),
+                format!("Brain resolved conflict: {} (supersedes outdated info)", winner.content.chars().take(200).collect::<String>()),
+                memory_ids,
+            ));
+        }
+    }
+
+    None
+}
+
+/// Check if a command is related to what a memory is talking about.
+/// Simple keyword overlap -- the brain's activation already did the heavy lifting.
+fn command_matches_memory(command: &str, memory_content: &str) -> bool {
+    let cmd_words: std::collections::HashSet<&str> = command
+        .split_whitespace()
+        .filter(|w| w.len() > 3)
+        .collect();
+    let mem_words: std::collections::HashSet<&str> = memory_content
+        .split_whitespace()
+        .filter(|w| w.len() > 3)
+        .collect();
+    let overlap = cmd_words.intersection(&mem_words).count();
+    overlap >= 2
+}
 
 fn find_server<'a>(host: &str, servers: &'a [ServerEntry]) -> Option<&'a ServerEntry> {
     servers.iter().find(|s| {
@@ -116,10 +205,83 @@ pub async fn gate_check(
     // Static dangerous pattern checks (run on resolved command)
     if let Some(block_reason) = check_dangerous_patterns(command, &state.config) {
         tracing::warn!("gate: BLOCK tool={} reason={} session={}", tool_name, block_reason, session_id);
+
+        // Increment corrections counter on static blocks too
+        if session_id != "unknown" {
+            let mut sessions = state.sessions.lock().await;
+            if let Some(s) = sessions.get_session_mut(session_id, None) {
+                s.corrections += 1;
+            }
+            sessions.sync_session_to_db(session_id);
+        }
+
         return Json(json!({
             "action": "block",
             "message": format!("BLOCKED: {}", block_reason),
         }));
+    }
+
+    // Brain-grounded validation for all non-trivial commands
+    if !command.trim().is_empty() && tool_name == "Bash" {
+        if let Some((action, message, memory_ids)) = brain_validate_action(&state, command, tool_name).await {
+            if action == "block" {
+                tracing::warn!("gate: BRAIN BLOCK tool={} session={} reason={}", tool_name, session_id, message);
+
+                // Increment corrections counter
+                {
+                    let mut sessions = state.sessions.lock().await;
+                    if let Some(s) = sessions.get_session_mut(session_id, None) {
+                        s.corrections += 1;
+                    }
+                    sessions.sync_session_to_db(session_id);
+                }
+
+                // Evolution feedback: these memories led to a block
+                #[cfg(feature = "evolution")]
+                if !memory_ids.is_empty() {
+                    let brain = Arc::clone(&state.brain);
+                    tokio::spawn(async move {
+                        let mut brain = brain.lock().await;
+                        brain.evolution_feedback(memory_ids, vec![], false);
+                    });
+                }
+
+                if let Some(mi) = modified_input {
+                    return Json(json!({
+                        "action": "block",
+                        "message": format!("BLOCKED: {}", message),
+                        "modified_input": mi,
+                    }));
+                }
+                return Json(json!({
+                    "action": "block",
+                    "message": format!("BLOCKED: {}", message),
+                }));
+            }
+
+            if action == "enrich" {
+                tracing::info!("gate: BRAIN ENRICH tool={} session={}", tool_name, session_id);
+
+                // Evolution feedback: these memories were useful for enrichment
+                #[cfg(feature = "evolution")]
+                if !memory_ids.is_empty() {
+                    let brain = Arc::clone(&state.brain);
+                    tokio::spawn(async move {
+                        let mut brain = brain.lock().await;
+                        brain.evolution_feedback(memory_ids, vec![], true);
+                    });
+                }
+
+                let mut result = json!({
+                    "action": "enrich",
+                    "message": message,
+                });
+                if let Some(mi) = modified_input {
+                    result.as_object_mut().map(|obj| obj.insert("modified_input".to_string(), mi));
+                }
+                return Json(result);
+            }
+        }
     }
 
     // SSH command checks (block wrong servers, enrich correct ones)

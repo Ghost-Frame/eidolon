@@ -128,6 +128,13 @@ async fn main() {
                         result.replayed, result.merged, result.pruned_patterns,
                         result.discovered, result.resolved, result.cycle_time_ms
                     );
+
+                    // Run evolution training step after each dream cycle
+                    #[cfg(feature = "evolution")]
+                    {
+                        let gen = brain_guard.evolution_train();
+                        tracing::info!("evolution: trained to generation {}", gen);
+                    }
                 }
             });
         }
