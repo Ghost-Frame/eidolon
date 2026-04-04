@@ -1,0 +1,73 @@
+#!/bin/bash
+# Pre-commit hook: block commits containing private infrastructure details.
+# Catches IPs, usernames, server names, and domains that should never be in public repos.
+#
+# Install: git config core.hooksPath .githooks
+# Or symlink: ln -sf ../../.githooks/pre-commit .git/hooks/pre-commit
+
+set -euo pipefail
+
+# Patterns that must NEVER appear in committed code.
+# Each line: regex|human-readable label
+PATTERNS=(
+  '100\.64\.0\.[0-9]+|Headscale IP'
+  '46\.225\.188\.154|OVH public IP'
+  '94\.156\.152\.50|Forge Box IP'
+  '15\.204\.88\.223|BAV apps IP'
+  '/home/zan[^a-z]|Personal home path'
+  'ZanSSH|SSH key name'
+  'zanfiel\.com|Personal domain'
+  'syntheos\.dev|Syntheos domain'
+  'engram\.lol|Engram domain'
+  'zancord\.org|Zancord domain'
+  'bayaudiovideo|BAV domain'
+  'zan-hetzner|Server hostname'
+  'bav-apps|Server hostname'
+  'forge-box|Server hostname'
+  'bav-pangolin|Server hostname'
+)
+
+# Files to skip (config examples, the hook itself, license)
+SKIP_PATTERN='(\.githooks/|LICENSE|\.gitignore|config\.example)'
+
+ERRORS=0
+
+# Only check staged changes (what's about to be committed)
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+for entry in "${PATTERNS[@]}"; do
+  pattern="${entry%%|*}"
+  label="${entry##*|}"
+
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+
+    # Skip excluded files
+    if echo "$file" | grep -qE "$SKIP_PATTERN"; then
+      continue
+    fi
+
+    # Check the staged version of the file (only added lines)
+    matches=$(git diff --cached -U0 -- "$file" 2>/dev/null | grep "^+" | grep -v "^+++" | grep -iE "$pattern" || true)
+    if [ -n "$matches" ]; then
+      echo "BLOCKED: $label found in $file"
+      echo "$matches" | head -3
+      echo ""
+      ERRORS=$((ERRORS + 1))
+    fi
+  done <<< "$STAGED"
+done
+
+if [ $ERRORS -gt 0 ]; then
+  echo "================================================"
+  echo " $ERRORS private info pattern(s) found in staged files."
+  echo " Remove them before committing."
+  echo " To bypass (emergencies only): git commit --no-verify"
+  echo "================================================"
+  exit 1
+fi
+
+exit 0
