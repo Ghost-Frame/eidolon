@@ -288,10 +288,14 @@ pub async fn run_claude_code(
         let mut sessions = state.sessions.lock().await;
         if let Some(s) = sessions.get_session_mut(session_id, None) {
             let code = exit_status.code().unwrap_or(-1);
-            if code == 0 {
-                s.status = crate::session::SessionStatus::Completed;
-            } else {
-                s.status = crate::session::SessionStatus::Failed;
+            if s.status != crate::session::SessionStatus::Killed
+                && s.status != crate::session::SessionStatus::TimedOut
+            {
+                if code == 0 {
+                    s.status = crate::session::SessionStatus::Completed;
+                } else {
+                    s.status = crate::session::SessionStatus::Failed;
+                }
             }
             s.exit_code = Some(code);
             s.ended_at = Some(chrono::Utc::now());

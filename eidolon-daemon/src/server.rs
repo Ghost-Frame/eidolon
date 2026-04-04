@@ -92,7 +92,8 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     for (x, y) in ha.iter().zip(hb.iter()) {
         result |= x ^ y;
     }
-    std::hint::black_box(result) == 0 && a.len() == b.len()
+    result |= (a.len() != b.len()) as u8;
+    std::hint::black_box(result) == 0
 }
 
 async fn rate_limit_middleware(

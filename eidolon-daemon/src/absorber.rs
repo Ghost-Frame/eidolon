@@ -35,15 +35,8 @@ pub async fn absorb_to_brain(
         }
     };
 
-    // Generate a unique ID based on content hash + timestamp
-    let id = {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        content.hash(&mut hasher);
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0).hash(&mut hasher);
-        // Use positive IDs (negative are reserved for ghost patterns)
-        (hasher.finish() as i64).abs()
-    };
+    // Generate a unique ID using UUID v4
+    let id = (uuid::Uuid::new_v4().as_u128() as i64).abs();
 
     let memory = eidolon_lib::types::BrainMemory {
         id,

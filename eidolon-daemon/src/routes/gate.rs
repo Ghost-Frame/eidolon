@@ -8,7 +8,6 @@ use std::sync::Arc;
 use crate::AppState;
 use crate::config::{Config, ServerEntry};
 use crate::secrets::{self, CreddClient};
-use crate::UserIdentity;
 
 /// Query the brain to validate an action. Returns (action, message, memory_ids).
 /// The brain provides context-aware validation beyond static rules.
@@ -106,6 +105,7 @@ fn find_server<'a>(host: &str, servers: &'a [ServerEntry]) -> Option<&'a ServerE
 
 pub async fn gate_check(
     State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<crate::UserIdentity>,
     Json(input): Json<Value>,
 ) -> Json<Value> {
     let tool_name = input.get("tool_name")
@@ -113,9 +113,18 @@ pub async fn gate_check(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    let session_id = input.get("session_id")
+    let raw_session_id = input.get("session_id")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
+    let session_id = if raw_session_id != "unknown" {
+        match uuid::Uuid::parse_str(raw_session_id) {
+            Ok(_) => raw_session_id,
+            Err(_) => "unknown",
+        }
+    } else {
+        "unknown"
+    };
+    let user_filter: Option<&str> = if user.0 == "system" { None } else { Some(user.0.as_str()) };
 
     // --- Secret resolution (runs FIRST, before all other gate logic) ---
     let mut modified_input: Option<Value> = None;
@@ -172,7 +181,7 @@ pub async fn gate_check(
 
     if is_engram_store && session_id != "unknown" {
         let mut sessions = state.sessions.lock().await;
-        if let Some(session) = sessions.get_session_mut(session_id, None) {
+        if let Some(session) = sessions.get_session_mut(session_id, user_filter) {
             session.engram_stores += 1;
             tracing::info!(
                 "gate: engram store tracked session={} total={}",
@@ -209,7 +218,7 @@ pub async fn gate_check(
         // Increment corrections counter on static blocks too
         if session_id != "unknown" {
             let mut sessions = state.sessions.lock().await;
-            if let Some(s) = sessions.get_session_mut(session_id, None) {
+            if let Some(s) = sessions.get_session_mut(session_id, user_filter) {
                 s.corrections += 1;
             }
             sessions.sync_session_to_db(session_id);
@@ -230,7 +239,7 @@ pub async fn gate_check(
                 // Increment corrections counter
                 {
                     let mut sessions = state.sessions.lock().await;
-                    if let Some(s) = sessions.get_session_mut(session_id, None) {
+                    if let Some(s) = sessions.get_session_mut(session_id, user_filter) {
                         s.corrections += 1;
                     }
                     sessions.sync_session_to_db(session_id);
@@ -495,34 +504,26 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<(Value, Ve
     }
 
     // Unknown host: query brain for context
-    let embed_url = format!("{}/embed", state.config.engram.url);
     let query_text = format!("server {} ssh configuration", host);
 
-    let embed_resp = state.http_client
-        .post(&embed_url)
-        .json(&json!({"text": query_text}))
-        .send()
-        .await;
-
-    if let Ok(resp) = embed_resp {
-        if resp.status().is_success() {
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                if let Ok(embedding) = serde_json::from_value::<Vec<f32>>(body["embedding"].clone()) {
-                    if !embedding.is_empty() {
-                        let mut brain = state.brain.lock().await;
-                        let result = brain.query(&embedding, 5, 8.0, 2);
-                        let memory_ids: Vec<i64> = result.activated.iter().map(|m| m.id).collect();
-                        let top = result.activated.first();
-                        if let Some(mem) = top {
-                            if mem.activation > 0.5 {
-                                return Some((json!({
-                                    "action": "enrich",
-                                    "message": format!("Brain context for {}: {}", host, mem.content),
-                                    "context": mem.content.clone(),
-                                }), memory_ids));
-                            }
-                        }
-                    }
+    if let Some(embedding) = crate::embed_text(
+        &state.http_client,
+        &state.config.engram.url,
+        state.config.engram.api_key.as_deref(),
+        &query_text,
+    ).await {
+        if !embedding.is_empty() {
+            let mut brain = state.brain.lock().await;
+            let result = brain.query(&embedding, 5, 8.0, 2);
+            let memory_ids: Vec<i64> = result.activated.iter().map(|m| m.id).collect();
+            let top = result.activated.first();
+            if let Some(mem) = top {
+                if mem.activation > 0.5 {
+                    return Some((json!({
+                        "action": "enrich",
+                        "message": format!("Brain context for {}: {}", host, mem.content),
+                        "context": mem.content.clone(),
+                    }), memory_ids));
                 }
             }
         }
@@ -542,34 +543,26 @@ async fn check_systemctl_command(command: &str, state: &AppState) -> Option<(Val
 
     let service = service.copied()?;
 
-    let embed_url = format!("{}/embed", state.config.engram.url);
     let query_text = format!("systemctl {} {} restart order dependencies", action, service);
 
-    let embed_resp = state.http_client
-        .post(&embed_url)
-        .json(&json!({"text": query_text}))
-        .send()
-        .await;
-
-    if let Ok(resp) = embed_resp {
-        if resp.status().is_success() {
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                if let Ok(embedding) = serde_json::from_value::<Vec<f32>>(body["embedding"].clone()) {
-                    if !embedding.is_empty() {
-                        let mut brain = state.brain.lock().await;
-                        let result = brain.query(&embedding, 5, 8.0, 2);
-                        let memory_ids: Vec<i64> = result.activated.iter().map(|m| m.id).collect();
-                        let top = result.activated.first();
-                        if let Some(mem) = top {
-                            if mem.activation > 0.5 && mem.content.to_lowercase().contains("restart") {
-                                return Some((json!({
-                                    "action": "enrich",
-                                    "message": format!("Brain context for {} {}: {}", action, service, mem.content),
-                                    "context": mem.content.clone(),
-                                }), memory_ids));
-                            }
-                        }
-                    }
+    if let Some(embedding) = crate::embed_text(
+        &state.http_client,
+        &state.config.engram.url,
+        state.config.engram.api_key.as_deref(),
+        &query_text,
+    ).await {
+        if !embedding.is_empty() {
+            let mut brain = state.brain.lock().await;
+            let result = brain.query(&embedding, 5, 8.0, 2);
+            let memory_ids: Vec<i64> = result.activated.iter().map(|m| m.id).collect();
+            let top = result.activated.first();
+            if let Some(mem) = top {
+                if mem.activation > 0.5 && mem.content.to_lowercase().contains("restart") {
+                    return Some((json!({
+                        "action": "enrich",
+                        "message": format!("Brain context for {} {}: {}", action, service, mem.content),
+                        "context": mem.content.clone(),
+                    }), memory_ids));
                 }
             }
         }
@@ -586,6 +579,7 @@ pub struct CompleteRequest {
 
 pub async fn gate_complete(
     State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<crate::UserIdentity>,
     Json(input): Json<CompleteRequest>,
 ) -> Json<Value> {
     let summary = input.summary.trim().to_string();
@@ -598,8 +592,9 @@ pub async fn gate_complete(
         }));
     }
 
+    let user_filter: Option<&str> = if user.0 == "system" { None } else { Some(user.0.as_str()) };
     let sessions = state.sessions.lock().await;
-    match sessions.get_session(&input.session_id, None) {
+    match sessions.get_session(&input.session_id, user_filter) {
         None => {
             tracing::warn!("gate/complete: blocked -- session not found id={}", input.session_id);
             Json(json!({
