@@ -26,6 +26,8 @@ pub struct ActivityRequest {
 /// - Broca (action log)
 /// - Engram (memory storage, on completions)
 /// - Brain (local absorption, always)
+/// - Soma (agent registry + heartbeat)
+/// - Thymus (drift events + session quality)
 ///
 /// All fan-out is best-effort. Individual failures are logged but
 /// do not fail the request.
@@ -78,6 +80,7 @@ pub async fn post_activity(
     let axon_channel = match req.action.as_str() {
         "task.blocked" | "error.raised" => "alerts",
         a if a.starts_with("task.") => "tasks",
+        a if a.starts_with("drift.") || a.starts_with("session.") => "quality",
         _ => "system",
     };
     let axon_type = req.action.clone();
@@ -122,8 +125,24 @@ pub async fn post_activity(
         }
     };
 
-    let (axon_result, broca_result, _, engram_result) =
-        tokio::join!(axon_fut, broca_fut, brain_fut, engram_fut);
+    let thymus_fut = async {
+        if req.action.starts_with("drift.") || req.action.starts_with("session.") {
+            fanout_thymus(
+                http, engram_url, &engram_key,
+                &req.agent, &req.action, &summary_short, &req.details,
+            ).await
+        } else {
+            "skipped".to_string()
+        }
+    };
+
+    let soma_fut = fanout_soma(
+        http, engram_url, &engram_key,
+        &req.agent, &req.action,
+    );
+
+    let (axon_result, broca_result, _, engram_result, thymus_result, soma_result) =
+        tokio::join!(axon_fut, broca_fut, brain_fut, engram_fut, thymus_fut, soma_fut);
 
     Ok(Json(json!({
         "ok": true,
@@ -133,6 +152,8 @@ pub async fn post_activity(
             "broca": broca_result,
             "brain": "absorbed",
             "engram": engram_result,
+            "thymus": thymus_result,
+            "soma": soma_result,
         }
     })))
 }
@@ -397,5 +418,186 @@ async fn fanout_engram(
             tracing::warn!("activity: engram store error: {}", e);
             "failed".to_string()
         }
+    }
+}
+
+// -- Soma fan-out (agent registry + heartbeat) --
+
+async fn fanout_soma(
+    http: &reqwest::Client,
+    engram_url: &str,
+    engram_key: &str,
+    agent: &str,
+    action: &str,
+) -> String {
+    let auth = format!("Bearer {}", engram_key);
+    let soma_base = format!("{}/soma", engram_url);
+
+    // Determine heartbeat status from action
+    let status = match action {
+        "task.started" => "online",
+        "task.progress" => "online",
+        "task.completed" => "online",
+        "task.blocked" => "online",
+        "error.raised" => "error",
+        _ => "online",
+    };
+
+    // Try to find existing agent by name
+    let list_url = format!("{}/agents", soma_base);
+    let existing_id = match http.get(&list_url)
+        .header("Authorization", &auth)
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            resp.json::<Value>().await.ok().and_then(|v| {
+                let agents = v.as_array()?;
+                agents.iter().find(|a| {
+                    a.get("name").and_then(|n| n.as_str()) == Some(agent)
+                })?.get("id").and_then(|id| id.as_i64().map(|i| i.to_string()).or_else(|| id.as_str().map(String::from)))
+            })
+        }
+        _ => None,
+    };
+
+    let agent_id = match existing_id {
+        Some(id) => id,
+        None => {
+            // Register new agent
+            match http.post(&format!("{}/agents", soma_base))
+                .header("Authorization", &auth)
+                .header("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_secs(3))
+                .json(&json!({
+                    "name": agent,
+                    "type": "cli",
+                }))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<Value>().await.ok().and_then(|v| {
+                        v.get("id").and_then(|id| id.as_i64().map(|i| i.to_string()).or_else(|| id.as_str().map(String::from)))
+                    }) {
+                        Some(id) => id,
+                        None => return "register_failed".to_string(),
+                    }
+                }
+                _ => return "register_failed".to_string(),
+            }
+        }
+    };
+
+    // Send heartbeat
+    match http.post(&format!("{}/agents/{}/heartbeat", soma_base, agent_id))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(3))
+        .json(&json!({ "status": status }))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => "heartbeat".to_string(),
+        Ok(resp) => {
+            tracing::warn!("activity: soma heartbeat failed: {}", resp.status());
+            "failed".to_string()
+        }
+        Err(e) => {
+            tracing::warn!("activity: soma heartbeat error: {}", e);
+            "failed".to_string()
+        }
+    }
+}
+
+// -- Thymus fan-out (drift events + session quality) --
+
+async fn fanout_thymus(
+    http: &reqwest::Client,
+    engram_url: &str,
+    engram_key: &str,
+    agent: &str,
+    action: &str,
+    summary: &str,
+    details: &Option<Value>,
+) -> String {
+    let auth = format!("Bearer {}", engram_key);
+
+    match action {
+        "drift.detected" => {
+            // Extract drift details from the details field or summary
+            let (drift_type, severity, signal) = if let Some(d) = details {
+                (
+                    d.get("drift_type").and_then(|v| v.as_str()).unwrap_or("framework"),
+                    d.get("severity").and_then(|v| v.as_str()).unwrap_or("low"),
+                    d.get("signal").and_then(|v| v.as_str()).unwrap_or(summary),
+                )
+            } else {
+                ("framework", "low", summary)
+            };
+
+            let url = format!("{}/thymus/drift-events", engram_url);
+            match http.post(&url)
+                .header("Authorization", &auth)
+                .header("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_secs(3))
+                .json(&json!({
+                    "agent": agent,
+                    "drift_type": drift_type,
+                    "severity": severity,
+                    "signal": signal,
+                }))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => "drift_recorded".to_string(),
+                Ok(resp) => {
+                    tracing::warn!("activity: thymus drift-event failed: {}", resp.status());
+                    "failed".to_string()
+                }
+                Err(e) => {
+                    tracing::warn!("activity: thymus drift-event error: {}", e);
+                    "failed".to_string()
+                }
+            }
+        }
+        "session.quality" => {
+            // Post session quality metrics
+            let url = format!("{}/thymus/metrics", engram_url);
+            let value = details.as_ref()
+                .and_then(|d| d.get("score"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.5);
+            let tags = details.as_ref()
+                .and_then(|d| d.get("tags"))
+                .cloned()
+                .unwrap_or(json!({}));
+
+            match http.post(&url)
+                .header("Authorization", &auth)
+                .header("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_secs(3))
+                .json(&json!({
+                    "agent": agent,
+                    "name": "session_compliance",
+                    "value": value,
+                    "tags": tags,
+                }))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => "quality_recorded".to_string(),
+                Ok(resp) => {
+                    tracing::warn!("activity: thymus session-quality failed: {}", resp.status());
+                    "failed".to_string()
+                }
+                Err(e) => {
+                    tracing::warn!("activity: thymus session-quality error: {}", e);
+                    "failed".to_string()
+                }
+            }
+        }
+        _ => "skipped".to_string(),
     }
 }
