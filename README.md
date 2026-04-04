@@ -39,7 +39,7 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 - **Instincts.** New instances ship with pre-trained neural wiring for how to think. What to think about comes from operator data.
 - **Evolution.** Feedback reshapes connection weights. The brain adjusts what it emphasizes based on what turns out to be right or wrong.
 - **The Guardian.** A persistent daemon that spawns agents with living context from the brain, intercepts every action through a gate, blocks mistakes, and absorbs session learnings back.
-- **Activity fan-out.** Agents report activity to one endpoint. Eidolon distributes to task tracking, event bus, action logging, memory storage, and the neural brain.
+- **Activity fan-out.** Agents report activity to one endpoint. Eidolon distributes to task tracking, event bus, action logging, quality evaluation, agent registry, memory storage, and the neural brain.
 
 ---
 
@@ -75,11 +75,13 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 |   Neural Substrate |    |  Engram + Syntheos  |
 |   eidolon-lib      |    |                     |
 |   (Rust)           |    |  Memory storage     |
-|                    |    |  Task tracking      |
-|  Hopfield store    |    |  Event bus          |
-|  Activation graph  |    |  Action logging     |
-|  Interference      |    |  Agent registry     |
-|  Decay             |    +---------------------+
+|                    |    |  Fact decomposition |
+|  Hopfield store    |    |  Task tracking      |
+|  Activation graph  |    |  Event bus          |
+|  Interference      |    |  Action logging     |
+|  Decay             |    |  Agent registry     |
+|                    |    |  Quality evaluation |
+|                    |    +---------------------+
 |  Dreaming          |
 |  Instincts         |
 |  Evolution         |
@@ -95,32 +97,81 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 
 **Guardian Daemon** (`eidolon-daemon`): Persistent service at `:7700`. Manages agent sessions, generates living prompts from brain state, runs the action gate on every outbound command, absorbs session learnings back into the brain. Unified `/activity` endpoint handles fan-out to all Syntheos services.
 
-**Terminal UI** (`eidolon-tui`): Interactive TUI with a local LLM sidecar (llama-server on GPU). Handles routing and casual chat locally, delegates agent spawning and orchestration to the daemon.
+**Terminal UI** (`eidolon-tui`): One frontend for the daemon. Interactive TUI with a local LLM sidecar (llama-server on GPU) for routing and casual chat. Agent spawning, gate checks, brain queries, and session management all go through the daemon. Not required -- any agent that hits the daemon's API gets the same intelligence layer.
 
 **CLI** (`eidolon-cli`): Submit tasks and query status from the command line.
 
 ---
 
-## The Action Gate
+## Integrating with Agents
 
-Every action an agent attempts passes through the gate before execution. The gate checks it against brain knowledge and static safety rules. It returns `allow`, `block`, or `enrich` (allow with added context).
+The daemon is the core. The TUI is one frontend. Any agent that talks to the daemon's HTTP API gets the same intelligence layer -- living context, gate checks, brain recall, session absorption. A cloud-hosted agent (Claude Code, Cursor, etc.) running through the daemon gets the same capabilities as the local TUI.
 
-Gate hook for Claude Code (place in `.claude/settings.json`):
+### Claude Code Hooks
+
+Full integration uses four hook points. Place these in `.claude/settings.json`:
 
 ```json
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "bash ~/.claude/hooks/session-start-engram.sh",
+          "timeout": 30,
+          "statusMessage": "Loading context from Eidolon brain..."
+        }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "bash ~/.claude/hooks/session-end.sh",
+          "timeout": 15
+        }]
+      }
+    ],
     "PreToolUse": [
       {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": "bash /path/to/eidolon/scripts/eidolon-gate.sh"}]
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "bash /path/to/eidolon/scripts/eidolon-gate.sh",
+          "timeout": 10
+        }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "bash ~/.claude/hooks/eidolon-activity.sh",
+          "timeout": 10,
+          "async": true
+        }]
       }
     ]
   }
 }
 ```
 
-The gate fails open. If the daemon is unreachable, commands proceed normally. A dead gate is better than a dead agent.
+**What each hook does:**
+
+| Hook | Lifecycle | Purpose |
+|------|-----------|---------|
+| SessionStart | Agent session begins | Calls `/prompt/generate` to inject brain-aware context. Registers with Soma via `/activity`. Falls back to direct Engram search if daemon is unreachable. |
+| Stop | Agent session ends | Calls `/gate/complete` to enforce Engram store requirement. Reports `agent.offline` via `/activity` for fan-out. |
+| PreToolUse (Bash) | Before every shell command | Sends command to `/gate/check`. Returns `allow`, `block`, or `enrich` (allow with added context). |
+| PostToolUse (Bash) | After every shell command | Reports significant actions (git push, ssh, deploys, service management) to `/activity`. Async, never blocks. |
+
+All hooks fail open. If the daemon is unreachable, commands proceed normally. A dead gate is better than a dead agent.
+
+### The Gate
+
+The gate script (`scripts/eidolon-gate.sh`) reads hook input from stdin, posts it to `/gate/check`, and interprets the response. Blocked actions exit with code 2 and print the reason to stderr. Enriched actions print added context to stderr and allow execution.
 
 ---
 
@@ -132,6 +183,8 @@ Agents report activity to `POST /activity` with one call. Eidolon fans out to:
 - **Axon** (event bus): publishes events to appropriate channels
 - **Broca** (action log): logs significant actions
 - **Engram** (memory): stores completions and errors for cross-agent visibility
+- **Soma** (agent registry): updates agent heartbeats and status
+- **Thymus** (quality evaluation): records quality metrics from agent outcomes
 - **Brain** (neural substrate): absorbs everything as activation patterns
 
 ```bash
