@@ -53,8 +53,8 @@ Task: {}
 {}
 
 ## Safety Rules
-- NEVER assign passwords -- ask the user
-- NEVER hardcode credentials -- use cred/credd
+- NEVER assign passwords - ask the user
+- NEVER hardcode credentials - use cred/credd
 - NEVER modify SSH config without verifying access first
 - NEVER force push to main/master without explicit approval
 - NEVER run destructive commands without checking state first

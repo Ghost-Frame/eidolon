@@ -147,7 +147,7 @@ impl Brain {
             mem.activation = 0.5;
         }
 
-        // Clear raw embeddings now that PCA projection is done -- free the 1024-dim vecs
+        // Clear raw embeddings now that PCA projection is done - free the 1024-dim vecs
         for mem in &mut memories {
             mem.embedding.clear();
             mem.embedding.shrink_to_fit();

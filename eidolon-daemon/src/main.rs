@@ -45,10 +45,10 @@ async fn main() {
             }
         }
     } else if !config.auth.has_keys() {
-        eprintln!("[eidolon-daemon] no credd.agent_key and no EIDOLON_API_KEY -- cannot start");
+        eprintln!("[eidolon-daemon] no credd.agent_key and no EIDOLON_API_KEY - cannot start");
         std::process::exit(1);
     } else {
-        tracing::warn!("no credd agent_key configured -- using plaintext config (DEPRECATED)");
+        tracing::warn!("no credd agent_key configured - using plaintext config (DEPRECATED)");
     }
 
     tracing::info!(
@@ -65,7 +65,7 @@ async fn main() {
     match brain.init(&config.brain.db_path, Some(&config.brain.data_dir)) {
         Ok(msg) => tracing::info!("brain: {}", msg),
         Err(e) => {
-            tracing::warn!("brain init failed: {} -- continuing with empty brain", e);
+            tracing::warn!("brain init failed: {} - continuing with empty brain", e);
         }
     }
 

@@ -73,11 +73,11 @@ fn test_keyword_fallback_memory() {
 fn test_keyword_fallback_confidence_scales() {
     use eidolon_tui::conversation::router::RoutingDecision;
 
-    // Single match -- lower confidence
+    // Single match - lower confidence
     let single = RoutingDecision::keyword_fallback("fix something");
     assert!(single.confidence < 0.5, "single match should have low confidence: {}", single.confidence);
 
-    // Multiple matches -- higher confidence
+    // Multiple matches - higher confidence
     let multi = RoutingDecision::keyword_fallback("fix and deploy and update the build");
     assert!(multi.confidence > single.confidence, "multi match ({}) should beat single ({})", multi.confidence, single.confidence);
 }
@@ -101,7 +101,7 @@ fn test_extract_from_text_case_insensitive() {
 #[test]
 fn test_extract_from_text_keyword_fallback_on_garbage() {
     use eidolon_tui::conversation::router::{RoutingDecision, Intent};
-    // No JSON, no keywords -- should be casual
+    // No JSON, no keywords - should be casual
     let decision = RoutingDecision::extract_from_text("hello world how are you").unwrap();
     assert_eq!(decision.intent, Intent::Casual);
 }

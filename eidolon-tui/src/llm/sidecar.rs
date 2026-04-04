@@ -115,7 +115,7 @@ impl LlamaSidecar {
 
         self.process = Some(child);
 
-        // Poll health endpoint until ready (timeout 120s -- 14B model on GPU can take a while)
+        // Poll health endpoint until ready (timeout 120s - 14B model on GPU can take a while)
         for _ in 0..240 {
             sleep(Duration::from_millis(500)).await;
 

@@ -1,4 +1,4 @@
-// instincts.rs -- synthetic pre-training corpus for new Eidolon instances
+// instincts.rs - synthetic pre-training corpus for new Eidolon instances
 //
 // Generates ~200 structurally realistic ghost memories across 5 categories.
 // Ghosts use negative IDs, start at strength 0.3, decay 2x faster than real memories.
@@ -157,7 +157,7 @@ pub fn generate_instincts() -> InstinctsCorpus {
     for (old_ver, new_ver, service, desc, base_hours) in infra_sets {
         let id1 = next_id; next_id -= 1;
         let content1 = format!(
-            "{} is running {} on {} -- {}. Deployed 2026-01-15. Status: stable.",
+            "{} is running {} on {} - {}. Deployed 2026-01-15. Status: stable.",
             service, old_ver, service, desc
         );
         memories.push(SyntheticMemory {
@@ -199,7 +199,7 @@ pub fn generate_instincts() -> InstinctsCorpus {
 
         let id4 = next_id; next_id -= 1;
         let content4 = format!(
-            "{} is NOW running {} on {} -- {}. Upgraded from {}. Status: stable, verified.",
+            "{} is NOW running {} on {} - {}. Upgraded from {}. Status: stable, verified.",
             service, new_ver, service, desc, old_ver
         );
         memories.push(SyntheticMemory {
@@ -291,9 +291,9 @@ pub fn generate_instincts() -> InstinctsCorpus {
         ("server-specs", "dev-workstation: Xeon W-2125 4.0GHz 8-core, 30GB RAM, 2TB HDD. Role: primary development and build machine.", 704, 9),
         ("endpoint", "Engram memory API: POST /store to persist memories, POST /search to query, GET /recall for recent. Auth via Bearer token.", 710, 8),
         ("endpoint", "Eidolon brain API: JSON over stdio. Commands: init, query, absorb, decay_tick, dream_cycle, get_stats, shutdown.", 712, 9),
-        ("filepath", "Brain database location: /brain.db -- SQLite, contains memories, edges, pca_state tables.", 714, 8),
-        ("filepath", "Instincts binary: /instincts.bin -- gzip-compressed JSON corpus, applied on first init when brain.db is empty.", 716, 7),
-        ("filepath", "Eidolon Rust source: Eidolon source: src/ directory of eidolon-lib crate -- substrate.rs, graph.rs, dreaming.rs, instincts.rs, main.rs.", 718, 6),
+        ("filepath", "Brain database location: /brain.db - SQLite, contains memories, edges, pca_state tables.", 714, 8),
+        ("filepath", "Instincts binary: /instincts.bin - gzip-compressed JSON corpus, applied on first init when brain.db is empty.", 716, 7),
+        ("filepath", "Eidolon Rust source: Eidolon source: src/ directory of eidolon-lib crate - substrate.rs, graph.rs, dreaming.rs, instincts.rs, main.rs.", 718, 6),
         ("credential", "SSH key for all servers: operator-configured SSH key. Custom ports may apply for specific servers.", 720, 9),
         ("network", "VPN mesh subnet: configured in operator's mesh network. All nodes reachable by mesh IP.. Use internal IPs for inter-service traffic.", 722, 8),
         ("config", "Nginx config directory: /etc/nginx/sites-enabled/. Reload: nginx -t && systemctl reload nginx. Never restart without testing.", 730, 7),
@@ -301,11 +301,11 @@ pub fn generate_instincts() -> InstinctsCorpus {
         ("config", "Redis config: /etc/redis/redis.conf. Bind 127.0.0.1 only. requirepass enabled. maxmemory-policy allkeys-lru.", 734, 6),
         ("pattern", "Service restart pattern: check state -> back up config -> stop service -> apply change -> start service -> verify health -> monitor logs.", 740, 9),
         ("pattern", "File deployment pattern: write locally -> SCP to /tmp/ -> SSH mv to destination -> set permissions -> verify.", 742, 8),
-        ("pattern", "Never use heredoc over SSH for file content -- truncates to 0 bytes. Always use SCP for file transfers to remote hosts.", 744, 9),
+        ("pattern", "Never use heredoc over SSH for file content - truncates to 0 bytes. Always use SCP for file transfers to remote hosts.", 744, 9),
         ("pattern", "CrowdSec is the intrusion detection system on all nodes. Never install fail2ban. CrowdSec bouncer handles blocking.", 746, 8),
-        ("error", "podman cp truncates heredoc content -- root cause: shell expansion in subprocess. Fix: scp local file then podman cp from host.", 750, 8),
+        ("error", "podman cp truncates heredoc content - root cause: shell expansion in subprocess. Fix: scp local file then podman cp from host.", 750, 8),
         ("error", "Unix socket stale fd: when upstream restarts, downstream holds old fd. Both must restart in order: upstream first, then downstream.", 752, 7),
-        ("error", "SELinux blocks unexpected service access -- check ausearch -m avc -ts recent. Fix: restorecon -Rv /path or semanage.", 754, 6),
+        ("error", "SELinux blocks unexpected service access - check ausearch -m avc -ts recent. Fix: restorecon -Rv /path or semanage.", 754, 6),
     ];
 
     for (category, content, base_hours, importance) in references {
@@ -445,7 +445,7 @@ pub fn generate_instincts() -> InstinctsCorpus {
         ),
         (
             "The Hopfield substrate retrieves exact matches for query embeddings.",
-            "CORRECTION: Hopfield retrieval is approximate -- it finds nearest attractors via energy minimization. Not exact lookup.",
+            "CORRECTION: Hopfield retrieval is approximate - it finds nearest attractors via energy minimization. Not exact lookup.",
             1440, 1452, 6, 8
         ),
         (

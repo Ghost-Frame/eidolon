@@ -1,5 +1,5 @@
 // ============================================================================
-// Evolution -- neuro-symbolic graph learning (feature-gated).
+// Evolution - neuro-symbolic graph learning (feature-gated).
 // Per-node and per-edge learned weights trained from feedback signals.
 //
 // Feature gate: compile with --features evolution to enable.

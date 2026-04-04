@@ -108,7 +108,7 @@ pub enum Command {
     DreamCycle {
         seq: Option<u64>,
     },
-    // Evolution commands -- only meaningful when compiled with --features evolution
+    // Evolution commands - only meaningful when compiled with --features evolution
     // When evolution is disabled, these return { ok: false, error: "evolution not enabled" }
     FeedbackSignal {
         seq: Option<u64>,

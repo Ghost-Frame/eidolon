@@ -270,7 +270,7 @@ impl Config {
             let mode = meta.permissions().mode() & 0o777;
             if mode & 0o077 != 0 {
                 eprintln!(
-                    "[eidolon-tui] WARNING: config.toml has mode {:o} -- recommend chmod 600",
+                    "[eidolon-tui] WARNING: config.toml has mode {:o} - recommend chmod 600",
                     mode
                 );
             }

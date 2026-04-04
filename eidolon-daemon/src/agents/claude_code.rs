@@ -26,7 +26,7 @@ pub fn build_gate_hook(daemon_host: &str, daemon_port: u16, fail_closed: bool) -
     // the embedded Python code contains dict literals ({...}) that conflict with
     // Rust's format string syntax.
     let mut script = String::from("#!/bin/bash\n");
-    script.push_str("# Eidolon gate hook -- called by Claude Code before each tool use.\n");
+    script.push_str("# Eidolon gate hook - called by Claude Code before each tool use.\n");
     script.push_str("INPUT=$(cat)\n");
     script.push_str("if [ -z \"$INPUT\" ]; then\n  exit 0\nfi\n");
     script.push_str(&format!(
@@ -179,7 +179,7 @@ pub async fn run_claude_code(
     // Validate binary exists before attempting spawn
     if which::which(&claude_cmd).is_err() {
         return Err(format!(
-            "'{}' not found in PATH -- install Claude Code CLI or set agents.claude-code.command in config",
+            "'{}' not found in PATH - install Claude Code CLI or set agents.claude-code.command in config",
             claude_cmd
         ));
     }
@@ -210,7 +210,7 @@ pub async fn run_claude_code(
     }
 
     let mut child = cmd.spawn()
-        .map_err(|e| format!("failed to spawn claude: {} -- is 'claude' in PATH?", e))?;
+        .map_err(|e| format!("failed to spawn claude: {} - is 'claude' in PATH?", e))?;
 
     // Record PID
     let pid = child.id();
@@ -258,7 +258,7 @@ pub async fn run_claude_code(
         Ok(Ok(status)) => status,
         Ok(Err(e)) => return Err(format!("failed to wait for claude: {}", e)),
         Err(_) => {
-            // Timeout -- kill the process
+            // Timeout - kill the process
             tracing::warn!("session={} timed out after {}s, killing", session_id, timeout_secs);
             let _ = child.start_kill();
             let _ = child.wait().await;

@@ -96,7 +96,7 @@ impl CreddClient {
                 .map(|s| s.to_string())
                 .ok_or_else(|| "Note missing 'content' field".to_string()),
             other => Err(format!(
-                "bare reference not allowed for type '{}' -- use .field syntax",
+                "bare reference not allowed for type '{}' - use .field syntax",
                 other
             )),
         }
@@ -177,7 +177,7 @@ pub async fn resolve_secrets(
 /// Trust evaluation seam. Static threshold now, session-decay later.
 #[allow(unused_variables)]
 pub fn evaluate_trust(session_id: &str) -> u8 {
-    // Phase 1: deny by default (0) -- tier-3 secrets require real session tracking
+    // Phase 1: deny by default (0) - tier-3 secrets require real session tracking
     // Phase 2: track session age, tool call count, gate block count -> decay score
     0
 }

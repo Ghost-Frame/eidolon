@@ -1,4 +1,4 @@
-// dreaming.rs -- offline consolidation engine
+// dreaming.rs - offline consolidation engine
 // Performs one dream cycle: replay, merge, prune, discover, resolve.
 
 use std::collections::{HashMap, HashSet};

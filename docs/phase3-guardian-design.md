@@ -1,4 +1,4 @@
-# Eidolon Phase 3: The Guardian -- Design Spec
+# Eidolon Phase 3: The Guardian - Design Spec
 
 > Eidolon becomes the orchestrator, wrapper, and living prompt generator for all AI agents. Agents no longer run unsupervised. Eidolon spawns them, briefs them, guards them, teaches them, and absorbs their experience.
 
@@ -25,9 +25,9 @@ Agents don't run unsupervised anymore. Eidolon runs them.
 
 Eidolon is a persistent service with three layers:
 
-1. **Orchestrator** -- receives tasks, picks (or is told) which agent to use, manages session lifecycle
-2. **Wrapper** -- spawns agents inside a controlled environment, intercepts every action, blocks mistakes, teaches corrections
-3. **Living Prompt** -- generates a dynamic, tailored system prompt for each session from the brain's understanding of the task
+1. **Orchestrator** - receives tasks, picks (or is told) which agent to use, manages session lifecycle
+2. **Wrapper** - spawns agents inside a controlled environment, intercepts every action, blocks mistakes, teaches corrections
+3. **Living Prompt** - generates a dynamic, tailored system prompt for each session from the brain's understanding of the task
 
 ---
 
@@ -40,7 +40,7 @@ The orchestrator is the entry point. All tasks come through it, regardless of wh
 **Task intake:**
 - Receives: task description + optional agent preference + optional context
 - If agent not specified: Eidolon picks based on task analysis and historical performance. User can override at any time.
-- Agent overrides are feedback -- if user keeps overriding Sonnet to Opus for infra tasks, Eidolon learns to stop picking Sonnet for those.
+- Agent overrides are feedback - if user keeps overriding Sonnet to Opus for infra tasks, Eidolon learns to stop picking Sonnet for those.
 
 **Agent registry:**
 - Available agents: Claude Code (Opus/Sonnet/Haiku), OpenCode, Synapse v2 (Ion/ionsh), Pi (future)
@@ -80,9 +80,9 @@ Every outbound action passes through the gate before execution:
 2. Wrapper extracts intent from the action
 3. Brain does pattern completion: given this intent, what does Eidolon know?
 4. Three outcomes:
-   - **Allow** -- brain confirms the action makes sense. Proceed.
-   - **Block + teach** -- brain detects a problem. Stop the action. Return: what's wrong, what the correct action is, why. Absorb the correction into the brain.
-   - **Enrich** -- action is correct but incomplete. Brain adds missing context (right SSH key, right port, etc).
+   - **Allow** - brain confirms the action makes sense. Proceed.
+   - **Block + teach** - brain detects a problem. Stop the action. Return: what's wrong, what the correct action is, why. Absorb the correction into the brain.
+   - **Enrich** - action is correct but incomplete. Brain adds missing context (right SSH key, right port, etc).
 
 **Confidence threshold:**
 - High confidence (>0.8) that action is wrong: block
@@ -103,7 +103,7 @@ The living prompt is a document the brain writes, not a template with variables.
 
 **Assembly pipeline:**
 
-1. **Task analysis** -- the brain pattern-completes on the task description. What entities, servers, services, history, and constraints are relevant?
+1. **Task analysis** - the brain pattern-completes on the task description. What entities, servers, services, history, and constraints are relevant?
 
 2. **Context gathering** from the activated constellation:
    - Current state of relevant systems (IPs, paths, deployment methods, what's running where)
@@ -113,9 +113,9 @@ The living prompt is a document the brain writes, not a template with variables.
    - Available tools and when to use each one (Soma, Chiasm, Broca, Engram MCP tools)
    - What other agents have been working on recently (from Chiasm)
 
-3. **Prompt synthesis** -- the oracle (Branch C) generates a coherent briefing document from the gathered context. Reads like a briefing from someone who knows, not a dump of database rows.
+3. **Prompt synthesis** - the oracle (Branch C) generates a coherent briefing document from the gathered context. Reads like a briefing from someone who knows, not a dump of database rows.
 
-4. **Ongoing updates** -- as the session progresses, the wrapper monitors what the agent is doing. If the agent shifts to a new topic, Eidolon pushes a context update with relevant knowledge for the new direction.
+4. **Ongoing updates** - as the session progresses, the wrapper monitors what the agent is doing. If the agent shifts to a new topic, Eidolon pushes a context update with relevant knowledge for the new direction.
 
 **Example generated prompt:**
 
@@ -168,32 +168,32 @@ Eidolon runs as a persistent daemon with the following components:
 - Evolution (learned weights from feedback)
 
 ### Service Layer
-- **Task API** -- REST + WebSocket endpoint for all clients
-  - POST /task -- submit a task (with optional agent, model preferences)
-  - GET /task/:id -- task status, progress
-  - WS /task/:id/stream -- live output streaming
-  - POST /task/:id/override -- change agent/model mid-session
-  - POST /task/:id/kill -- terminate session
-  - GET /sessions -- list active sessions
-  - GET /brain/stats -- brain health, dream stats, evolution stats
+- **Task API** - REST + WebSocket endpoint for all clients
+  - POST /task - submit a task (with optional agent, model preferences)
+  - GET /task/:id - task status, progress
+  - WS /task/:id/stream - live output streaming
+  - POST /task/:id/override - change agent/model mid-session
+  - POST /task/:id/kill - terminate session
+  - GET /sessions - list active sessions
+  - GET /brain/stats - brain health, dream stats, evolution stats
 
-- **Agent spawner** -- manages agent processes
+- **Agent spawner** - manages agent processes
   - Spawns agents with injected living prompts
   - Routes agent stdio through the action gate
   - Handles agent crash/timeout
 
-- **Action gate** -- the guardian
+- **Action gate** - the guardian
   - Parses outbound actions from agent output
   - Queries brain for validation
   - Returns allow/block/enrich decisions
   - Logs all decisions for learning
 
-- **Prompt engine** -- generates living prompts
+- **Prompt engine** - generates living prompts
   - Queries brain for task-relevant context
   - Uses oracle to synthesize briefing documents
   - Pushes live updates during sessions
 
-- **Absorber** -- post-session learning
+- **Absorber** - post-session learning
   - Extracts learnings from completed sessions
   - Feeds back into brain
   - Updates agent track records
@@ -201,20 +201,20 @@ Eidolon runs as a persistent daemon with the following components:
 ### Client Adapters (all thin)
 
 **CLI:**
-- `eidolon "task description"` -- default agent
-- `eidolon --agent claude-opus "task description"` -- specific agent
-- `eidolon --agent opencode --model copilot "task description"` -- agent + model
+- `eidolon "task description"` - default agent
+- `eidolon --agent claude-opus "task description"` - specific agent
+- `eidolon --agent opencode --model copilot "task description"` - agent + model
 - Interactive mode: shows live agent output, allows intervention
-- `eidolon status` -- list active sessions
-- `eidolon brain` -- brain stats
+- `eidolon status` - list active sessions
+- `eidolon brain` - brain stats
 
 **Telegram bot:**
-- `/task deploy Engram to production` -- default agent
-- `/opus deploy Engram to production` -- specific model
+- `/task deploy Engram to production` - default agent
+- `/opus deploy Engram to production` - specific model
 - Sends progress updates as messages
 - Reply to override or provide input
-- `/status` -- active sessions
-- `/brain` -- brain summary
+- `/status` - active sessions
+- `/brain` - brain summary
 
 **Discord bot:**
 - Same command pattern as Telegram
@@ -264,15 +264,15 @@ Each agent type needs a thin adapter that knows how to:
 
 Every interaction makes Eidolon smarter:
 
-1. **Agent mistakes** -- blocked actions become strong training signals. The brain learns "SSH to 10.0.0.1 for Engram is wrong" with high confidence.
+1. **Agent mistakes** - blocked actions become strong training signals. The brain learns "SSH to 10.0.0.1 for Engram is wrong" with high confidence.
 
-2. **User overrides** -- when you switch from Sonnet to Opus, Eidolon learns task-type-to-model preferences.
+2. **User overrides** - when you switch from Sonnet to Opus, Eidolon learns task-type-to-model preferences.
 
-3. **Session outcomes** -- did the task succeed? Did it need corrections? How many? This builds agent track records.
+3. **Session outcomes** - did the task succeed? Did it need corrections? How many? This builds agent track records.
 
-4. **Repeated questions** -- if agents keep asking about the same thing across sessions, Eidolon elevates that knowledge to the living prompt template. It becomes part of every session's briefing.
+4. **Repeated questions** - if agents keep asking about the same thing across sessions, Eidolon elevates that knowledge to the living prompt template. It becomes part of every session's briefing.
 
-5. **Corrections propagate** -- a correction in one session immediately affects all future sessions. The brain learns once, all agents benefit.
+5. **Corrections propagate** - a correction in one session immediately affects all future sessions. The brain learns once, all agents benefit.
 
 ---
 
@@ -292,4 +292,4 @@ Every interaction makes Eidolon smarter:
 - You never have the same conversation twice. Eidolon remembers and teaches.
 - Agents use Soma, Chiasm, Broca without being told, because the living prompt tells them how and when.
 - The brain gets noticeably smarter over weeks. Corrections decrease. Sessions get faster. Agents need less hand-holding.
-- You open the egui app and see your entire infrastructure's state as Eidolon understands it -- a living, evolving map of everything you've built.
+- You open the egui app and see your entire infrastructure's state as Eidolon understands it - a living, evolving map of everything you've built.
