@@ -69,10 +69,12 @@ pub async fn run_agent(
         if let Some(s) = sessions.get_session_mut(&session_id, None) {
             s.exit_code = exit_code;
             s.ended_at = Some(Utc::now());
-            s.status = match exit_code {
-                Some(0) => SessionStatus::Completed,
-                _ => SessionStatus::Failed,
-            };
+            if s.status != SessionStatus::Killed && s.status != SessionStatus::TimedOut {
+                s.status = match exit_code {
+                    Some(0) => SessionStatus::Completed,
+                    _ => SessionStatus::Failed,
+                };
+            }
         }
         sessions.sync_session_to_db(&session_id);
     }

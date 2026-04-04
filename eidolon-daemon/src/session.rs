@@ -1,9 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc as StdArc, Mutex as StdMutex};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
+
+const MAX_OUTPUT_LINES: usize = 10_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -52,7 +55,7 @@ pub struct Session {
     pub status: SessionStatus,
     pub created_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
-    pub output_buffer: Vec<String>,
+    pub output_buffer: VecDeque<String>,
     pub output_tx: broadcast::Sender<String>,
     pub exit_code: Option<i32>,
     pub pid: Option<u32>,
@@ -73,7 +76,7 @@ impl Session {
             status: SessionStatus::Pending,
             created_at: Utc::now(),
             ended_at: None,
-            output_buffer: Vec::new(),
+            output_buffer: VecDeque::new(),
             output_tx: tx,
             exit_code: None,
             pid: None,
@@ -84,7 +87,10 @@ impl Session {
     }
 
     pub fn append_output(&mut self, line: String) {
-        self.output_buffer.push(line.clone());
+        self.output_buffer.push_back(line.clone());
+        if self.output_buffer.len() > MAX_OUTPUT_LINES {
+            self.output_buffer.pop_front();
+        }
         let _ = self.output_tx.send(line);
     }
 
@@ -114,7 +120,7 @@ impl Session {
 
 pub struct SessionManager {
     sessions: HashMap<String, Session>,
-    db: Option<Connection>,
+    db: Option<StdArc<StdMutex<Connection>>>,
 }
 
 impl SessionManager {
@@ -127,7 +133,7 @@ impl SessionManager {
                         return None;
                     }
                     tracing::info!("session db opened at {}", path);
-                    Some(conn)
+                    Some(StdArc::new(StdMutex::new(conn)))
                 }
                 Err(e) => {
                     tracing::warn!("session db open failed ({}), falling back to in-memory: {}", path, e);
@@ -174,7 +180,8 @@ impl SessionManager {
         let id = session.id.clone();
 
         // Insert into DB
-        if let Some(ref conn) = self.db {
+        if let Some(ref arc) = self.db {
+            let conn = arc.lock().unwrap();
             if let Err(e) = conn.execute(
                 "INSERT INTO sessions (id, task, agent, model, user, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
@@ -197,7 +204,8 @@ impl SessionManager {
 
     pub fn append_output(&mut self, session_id: &str, line: String) {
         // Insert into DB
-        if let Some(ref conn) = self.db {
+        if let Some(ref arc) = self.db {
+            let conn = arc.lock().unwrap();
             let _ = conn.execute(
                 "INSERT INTO session_output (session_id, line) VALUES (?1, ?2)",
                 params![session_id, &line],
@@ -238,9 +246,10 @@ impl SessionManager {
 
     /// Sync session fields to DB after in-memory mutation.
     pub fn sync_session_to_db(&self, id: &str) {
-        let Some(ref conn) = self.db else { return };
+        let Some(ref arc) = self.db else { return };
         let Some(s) = self.sessions.get(id) else { return };
         let ended_at = s.ended_at.map(|t| t.to_rfc3339());
+        let conn = arc.lock().unwrap();
         let _ = conn.execute(
             "UPDATE sessions SET status = ?1, ended_at = ?2, exit_code = ?3, pid = ?4, corrections = ?5, engram_stores = ?6, error = ?7 WHERE id = ?8",
             params![
@@ -307,49 +316,54 @@ impl SessionManager {
             .collect();
 
         // Add historical sessions from DB that are not in memory
-        if let Some(ref conn) = self.db {
-            let in_memory_ids: std::collections::HashSet<&str> = self.sessions.keys().map(|k| k.as_str()).collect();
-
-            if let Ok(mut stmt) = conn.prepare(
-                "SELECT id, task, agent, model, user, status, created_at, ended_at, exit_code, pid, corrections, engram_stores, error FROM sessions WHERE user = ?1 ORDER BY created_at DESC"
-            ) {
-                if let Ok(rows) = stmt.query_map(params![user], |row| {
-                    let id: String = row.get(0)?;
-                    let task: String = row.get(1)?;
-                    let agent: String = row.get(2)?;
-                    let model: String = row.get(3)?;
-                    let user_col: String = row.get(4)?;
-                    let status: String = row.get(5)?;
-                    let created_at: String = row.get(6)?;
-                    let ended_at: Option<String> = row.get(7)?;
-                    let exit_code: Option<i32> = row.get(8)?;
-                    let pid: Option<u32> = row.get(9)?;
-                    let corrections: i64 = row.get(10)?;
-                    let engram_stores: i64 = row.get(11)?;
-                    let error: Option<String> = row.get(12)?;
-                    Ok(serde_json::json!({
-                        "id": id,
-                        "task": task,
-                        "agent": agent,
-                        "model": model,
-                        "user": user_col,
-                        "status": status,
-                        "created_at": created_at,
-                        "ended_at": ended_at,
-                        "exit_code": exit_code,
-                        "pid": pid,
-                        "corrections": corrections,
-                        "engram_stores": engram_stores,
-                        "error": error,
-                        "output_lines": 0,
-                    }))
-                }) {
-                    for row_result in rows.flatten() {
-                        let id = row_result["id"].as_str().unwrap_or("");
-                        if !in_memory_ids.contains(id) {
-                            all.push(row_result);
-                        }
+        if let Some(ref arc) = self.db {
+            let in_memory_ids: std::collections::HashSet<String> = self.sessions.keys().cloned().collect();
+            let db_rows: Vec<serde_json::Value> = {
+                let conn = arc.lock().unwrap();
+                let mut collected = Vec::new();
+                if let Ok(mut stmt) = conn.prepare(
+                    "SELECT id, task, agent, model, user, status, created_at, ended_at, exit_code, pid, corrections, engram_stores, error FROM sessions WHERE user = ?1 ORDER BY created_at DESC"
+                ) {
+                    if let Ok(rows) = stmt.query_map(params![user], |row| {
+                        let id: String = row.get(0)?;
+                        let task: String = row.get(1)?;
+                        let agent: String = row.get(2)?;
+                        let model: String = row.get(3)?;
+                        let user_col: String = row.get(4)?;
+                        let status: String = row.get(5)?;
+                        let created_at: String = row.get(6)?;
+                        let ended_at: Option<String> = row.get(7)?;
+                        let exit_code: Option<i32> = row.get(8)?;
+                        let pid: Option<u32> = row.get(9)?;
+                        let corrections: i64 = row.get(10)?;
+                        let engram_stores: i64 = row.get(11)?;
+                        let error: Option<String> = row.get(12)?;
+                        Ok(serde_json::json!({
+                            "id": id,
+                            "task": task,
+                            "agent": agent,
+                            "model": model,
+                            "user": user_col,
+                            "status": status,
+                            "created_at": created_at,
+                            "ended_at": ended_at,
+                            "exit_code": exit_code,
+                            "pid": pid,
+                            "corrections": corrections,
+                            "engram_stores": engram_stores,
+                            "error": error,
+                            "output_lines": 0,
+                        }))
+                    }) {
+                        collected = rows.flatten().collect();
                     }
+                }
+                collected
+            };
+            for row_result in db_rows {
+                let id = row_result["id"].as_str().unwrap_or("").to_string();
+                if !in_memory_ids.contains(&id) {
+                    all.push(row_result);
                 }
             }
         }
@@ -360,5 +374,27 @@ impl SessionManager {
             b_ts.cmp(a_ts)
         });
         all
+    }
+
+    /// Evict sessions that have reached a terminal status and ended longer ago than max_age.
+    pub fn evict_completed(&mut self, max_age: std::time::Duration) {
+        let now = Utc::now();
+        self.sessions.retain(|_, s| {
+            let terminal = matches!(
+                s.status,
+                SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Killed | SessionStatus::TimedOut
+            );
+            if !terminal {
+                return true;
+            }
+            match s.ended_at {
+                Some(ended) => {
+                    let age = now.signed_duration_since(ended);
+                    let max_age_chrono = chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::seconds(3600));
+                    age < max_age_chrono
+                }
+                None => true,
+            }
+        });
     }
 }

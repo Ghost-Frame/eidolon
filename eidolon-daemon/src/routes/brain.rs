@@ -47,20 +47,13 @@ pub async fn brain_query(
     }
 
     // Call Engram /embed to get embedding vector
-    let embed_url = format!("{}/embed", state.config.engram.url);
-    let embed_resp = state.http_client
-        .post(&embed_url)
-        .json(&json!({"text": req.query}))
-        .send()
-        .await;
-
-    let embedding: Vec<f32> = match embed_resp {
-        Ok(resp) if resp.status().is_success() => {
-            resp.json::<serde_json::Value>().await
-                .ok()
-                .and_then(|v| serde_json::from_value(v["embedding"].clone()).ok())
-                .unwrap_or_default()
-        }
+    let embedding: Vec<f32> = match crate::embed_text(
+        &state.http_client,
+        &state.config.engram.url,
+        state.config.engram.api_key.as_deref(),
+        &req.query,
+    ).await {
+        Some(v) if !v.is_empty() => v,
         _ => {
             tracing::warn!("Engram /embed unavailable for brain_query, returning empty result");
             return Ok(Json(json!({

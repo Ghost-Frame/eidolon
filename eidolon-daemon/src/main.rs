@@ -113,7 +113,7 @@ async fn main() {
 
     // Spawn dream cycle background task
     {
-        let brain = Arc::clone(&state.brain);
+        let state_dream = Arc::clone(&state);
         let interval_secs = state.config.brain.dream_interval_secs;
         if interval_secs > 0 {
             tokio::spawn(async move {
@@ -121,19 +121,27 @@ async fn main() {
                 interval.tick().await;
                 loop {
                     interval.tick().await;
-                    let mut brain_guard = brain.lock().await;
-                    let result = brain_guard.run_dream_cycle();
-                    tracing::info!(
-                        "dream cycle: replayed={} merged={} pruned={} discovered={} resolved={} ({}ms)",
-                        result.replayed, result.merged, result.pruned_patterns,
-                        result.discovered, result.resolved, result.cycle_time_ms
-                    );
-
-                    // Run evolution training step after each dream cycle
-                    #[cfg(feature = "evolution")]
                     {
-                        let gen = brain_guard.evolution_train();
-                        tracing::info!("evolution: trained to generation {}", gen);
+                        let mut brain_guard = state_dream.brain.lock().await;
+                        let result = brain_guard.run_dream_cycle();
+                        tracing::info!(
+                            "dream cycle: replayed={} merged={} pruned={} discovered={} resolved={} ({}ms)",
+                            result.replayed, result.merged, result.pruned_patterns,
+                            result.discovered, result.resolved, result.cycle_time_ms
+                        );
+
+                        // Run evolution training step after each dream cycle
+                        #[cfg(feature = "evolution")]
+                        {
+                            let gen = brain_guard.evolution_train();
+                            tracing::info!("evolution: trained to generation {}", gen);
+                        }
+                    }
+
+                    // Evict terminal sessions older than 1 hour
+                    {
+                        let mut sessions = state_dream.sessions.lock().await;
+                        sessions.evict_completed(std::time::Duration::from_secs(3600));
                     }
                 }
             });
