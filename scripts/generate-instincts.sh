@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EIDOLON_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-RUST_DIR="${EIDOLON_ROOT}/rust"
+RUST_DIR="${EIDOLON_ROOT}"
 OUTPUT_PATH="${1:-${EIDOLON_ROOT}/data/instincts.bin}"
 
 echo "[generate-instincts] building Eidolon release binary..."
