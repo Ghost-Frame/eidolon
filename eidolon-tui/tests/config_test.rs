@@ -58,8 +58,8 @@ fn test_config_defaults_have_expected_values() {
     assert_eq!(config.llm.context_length, 8192);
     assert_eq!(config.llm.temperature_casual, 0.7);
     assert_eq!(config.llm.temperature_routing, 0.3);
-    assert_eq!(config.engram.url, "http://100.64.0.13:4203");
-    assert_eq!(config.credd.url, "http://100.64.0.2:4400");
+    assert_eq!(config.engram.url, "http://localhost:4200");
+    assert_eq!(config.credd.url, "http://localhost:4400");
     assert_eq!(config.agents.claude.command, "claude");
     assert_eq!(config.agents.codex.command, "codex");
     assert_eq!(config.session.auto_store_to_engram, true);
@@ -90,5 +90,5 @@ model_name = "custom-model"
     assert_eq!(config.llm.model_name, "custom-model");
     // Other fields should have defaults
     assert_eq!(config.llm.context_length, 8192);
-    assert_eq!(config.engram.url, "http://100.64.0.13:4203");
+    assert_eq!(config.engram.url, "http://localhost:4200");
 }

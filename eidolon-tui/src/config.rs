@@ -134,7 +134,7 @@ impl Default for LlmConfig {
 impl Default for EngramConfig {
     fn default() -> Self {
         Self {
-            url: "http://100.64.0.13:4203".to_string(),
+            url: "http://localhost:4200".to_string(),
             api_key: String::new(),
         }
     }
@@ -143,7 +143,7 @@ impl Default for EngramConfig {
 impl Default for CreddConfig {
     fn default() -> Self {
         Self {
-            url: "http://100.64.0.2:4400".to_string(),
+            url: "http://localhost:4400".to_string(),
             agent_key: String::new(),
         }
     }
