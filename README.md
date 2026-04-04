@@ -95,6 +95,8 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 
 **Neural Substrate** (`eidolon-lib`): Hopfield-based associative store, weighted activation graph, interference resolution, natural decay, offline dreaming, instinct pre-training, feedback-driven evolution.
 
+**Brain Binary** (`eidolon`): Standalone executable for direct neural brain operations -- pattern completion, dreaming cycles, instinct generation, and brain diagnostics outside the daemon.
+
 **Guardian Daemon** (`eidolon-daemon`): Persistent service at `:7700`. Manages agent sessions, generates living prompts from brain state, runs the action gate on every outbound command, absorbs session learnings back into the brain. Unified `/activity` endpoint handles fan-out to all Syntheos services.
 
 **Terminal UI** (`eidolon-tui`): One frontend for the daemon. Interactive TUI with a local LLM sidecar (llama-server on GPU) for routing and casual chat. Agent spawning, gate checks, brain queries, and session management all go through the daemon. Not required -- any agent that hits the daemon's API gets the same intelligence layer.
