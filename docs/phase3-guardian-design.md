@@ -123,20 +123,20 @@ The living prompt is a document the brain writes, not a template with variables.
 You are working on: Deploy Engram to production
 
 ## Current State
-- Engram production: production (10.0.0.2:4200), SSH as deploy, key the operator-configured SSH key
-- Deployed via SCP from dev-server staging, NOT a git repo on production
+- Engram production: engram.example.com:4200, SSH as deploy, key the operator-configured SSH key
+- Deployed via SCP from staging, NOT a git repo on production
 - Files at ~/engram/ on production
-- Last deployment: 2026-03-25 (GUI rebuild + nerve center API key fix)
-- dev-server (10.0.0.3) is staging/backup, NOT production
+- Last deployment: (see Engram memory for most recent deployment details)
+- staging.example.com is staging/backup, NOT production
 
 ## How to Deploy
-- Build/test on dev-server first
-- SCP files to production: scp -i the operator-configured SSH key [files] deploy@10.0.0.2:~/engram/
+- Build/test on staging first
+- SCP files to production: scp -i the operator-configured SSH key [files] deploy@<server>:~/engram/
 - Restart process on production after deploy
 
 ## Constraints
 - SSH key: the operator-configured SSH key (always, all servers)
-- DO NOT reboot OVH VPS (LUKS vault locks)
+- DO NOT reboot servers with encrypted volumes (vault locks)
 - CrowdSec everywhere, NEVER fail2ban
 - DO NOT assign passwords, ask the operator
 
@@ -147,8 +147,8 @@ You are working on: Deploy Engram to production
 - Query Engram before guessing at ANYTHING
 
 ## Recent Issues on Similar Tasks
-- Previous agents repeatedly SSH'd to wrong IPs (10.0.0.1, 10.0.0.100).
-  The correct IP is 10.0.0.2.
+- Previous agents repeatedly SSH'd to wrong IPs.
+  Query Engram for the correct server address before connecting.
 - Previous agents assumed Engram is a git repo on the production server. It is not.
 - Previous agents didn't know how Engram starts on production. Check Engram for the start command.
 ```
@@ -264,7 +264,7 @@ Each agent type needs a thin adapter that knows how to:
 
 Every interaction makes Eidolon smarter:
 
-1. **Agent mistakes** - blocked actions become strong training signals. The brain learns "SSH to 10.0.0.1 for Engram is wrong" with high confidence.
+1. **Agent mistakes** - blocked actions become strong training signals. The brain learns "SSH to the wrong host for Engram is wrong" with high confidence.
 
 2. **User overrides** - when you switch from Sonnet to Opus, Eidolon learns task-type-to-model preferences.
 

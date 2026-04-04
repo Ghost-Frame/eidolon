@@ -74,7 +74,7 @@ fn test_critical_patterns_blocked() {
 
     let critical_commands = vec![
         ("rm -rf /", "rm -rf root"),
-        ("rm -rf /home/zan", "rm -rf /home"),
+        ("rm -rf /home/user", "rm -rf /home"),
         ("rm -rf ~/", "rm -rf home dir"),
         ("git push --force origin main", "force push main"),
         ("git push -f origin master", "force push master"),
@@ -152,7 +152,7 @@ fn test_safe_commands_not_flagged() {
         "docker logs container1",
         "systemctl status nginx",
         "journalctl -u nginx",
-        "ssh zan@server ls",
+        "ssh user@server ls",
         "curl http://localhost:8080/health",
         "echo 'hello world'",
         "grep -r 'pattern' .",
