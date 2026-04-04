@@ -500,7 +500,7 @@ impl Config {
             }
         }
 
-        let instance_name = if self.server.port == 7700 { "hetzner" } else { "rocky" };
+        let instance_name = if self.server.port == 7700 { "primary" } else { "secondary" };
         match credd_fetch(http, credd_url, &agent_key, "eidolon", instance_name).await {
             Ok(secret) => {
                 let key = extract_api_key(&secret)?;

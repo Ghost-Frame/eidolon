@@ -58,7 +58,7 @@ Task: {}
 - NEVER modify SSH config without verifying access first
 - NEVER force push to main/master without explicit approval
 - NEVER run destructive commands without checking state first
-- Use SSH config aliases (ssh rocky, ssh hetzner-zan, etc.)
+- Use SSH config aliases for server access
 - Verify before acting: check state -> act -> verify result
 
 ## Syntheos APIs
