@@ -6,17 +6,17 @@ import { spawn, ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import * as fs from "node:fs";
 
-const DB_PATH = "/opt/eidolon/engram/data/brain.db";
-const DATA_DIR = "/opt/eidolon/engram/data";
+const DB_PATH = process.env.EIDOLON_DB_PATH || "./data/brain.db";
+const DATA_DIR = process.env.EIDOLON_DATA_DIR || "./data";
 
 const BACKENDS = [
   {
     name: "Rust",
-    bin: "/opt/eidolon/eidolon/rust/target/release/eidolon",
+    bin: process.env.EIDOLON_RUST_BIN || "./rust/target/release/eidolon",
   },
   {
     name: "C++",
-    bin: "/opt/eidolon/eidolon/cpp/build/eidolon",
+    bin: process.env.EIDOLON_CPP_BIN || "./cpp/build/eidolon",
   },
 ];
 

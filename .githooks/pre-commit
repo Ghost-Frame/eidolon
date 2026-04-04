@@ -9,23 +9,25 @@ set -euo pipefail
 
 # Patterns that must NEVER appear in committed code.
 # Each line: regex|human-readable label
+#
+# Keep patterns generic so the hook itself doesn't leak infrastructure details.
+# Add specific patterns in a local .githooks/.blocklist file (gitignored).
 PATTERNS=(
-  '100\.64\.0\.[0-9]+|Headscale IP'
-  '46\.225\.188\.154|OVH public IP'
-  '94\.156\.152\.50|Forge Box IP'
-  '15\.204\.88\.223|BAV apps IP'
+  '100\.64\.[0-9]+\.[0-9]+|VPN/overlay network IP'
+  '46\.225\.[0-9]+\.[0-9]+|Public server IP'
+  '94\.156\.[0-9]+\.[0-9]+|Public server IP'
+  '15\.204\.[0-9]+\.[0-9]+|Public server IP'
   '/home/zan[^a-z]|Personal home path'
-  'ZanSSH|SSH key name'
-  'zanfiel\.com|Personal domain'
-  'syntheos\.dev|Syntheos domain'
-  'engram\.lol|Engram domain'
-  'zancord\.org|Zancord domain'
-  'bayaudiovideo|BAV domain'
-  'zan-hetzner|Server hostname'
-  'bav-apps|Server hostname'
-  'forge-box|Server hostname'
-  'bav-pangolin|Server hostname'
 )
+
+# Load additional patterns from local blocklist if it exists
+if [ -f "$(git rev-parse --show-toplevel)/.githooks/.blocklist" ]; then
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    [[ "$line" == \#* ]] && continue
+    PATTERNS+=("$line")
+  done < "$(git rev-parse --show-toplevel)/.githooks/.blocklist"
+fi
 
 # Files to skip (config examples, the hook itself, license)
 SKIP_PATTERN='(\.githooks/|LICENSE|\.gitignore|config\.example)'

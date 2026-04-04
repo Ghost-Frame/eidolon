@@ -27,3 +27,9 @@ Thumbs.db
 
 # Operator config (contains infrastructure-specific data)
 config/eidolon.toml
+
+# Local hook blocklist (private patterns)
+.githooks/.blocklist
+
+# Agent planning docs (internal development process)
+docs/superpowers/
