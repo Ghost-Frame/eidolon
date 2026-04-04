@@ -190,6 +190,13 @@ models = ["opus", "sonnet", "haiku"]
 default_model = "sonnet"
 ```
 
+### Development Setup
+
+```bash
+# Enable the pre-commit hook (blocks commits containing private infrastructure details)
+git config core.hooksPath .githooks
+```
+
 ### Run
 
 ```bash
