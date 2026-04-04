@@ -18,7 +18,7 @@ pub struct ActivityRequest {
     pub details: Option<Value>,
 }
 
-/// POST /activity -- Unified Syntheos fan-out gateway.
+/// POST /activity - Unified Syntheos fan-out gateway.
 ///
 /// Agents POST a single activity report. Eidolon fans out to:
 /// - Chiasm (task tracking)
@@ -33,7 +33,7 @@ pub async fn post_activity(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ActivityRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // -- Validate --
+    // - Validate --
     if req.agent.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "agent is required"}))));
     }
@@ -68,13 +68,13 @@ pub async fn post_activity(
     let project = req.project.as_deref().unwrap_or("unknown");
     let summary_short: String = req.summary.chars().take(500).collect();
 
-    // -- Chiasm: task tracking (needs sequential query-then-act) --
+    // - Chiasm: task tracking (needs sequential query-then-act) --
     let chiasm_result = fanout_chiasm(
         http, engram_url, &engram_key,
         &req.agent, &req.action, project, &summary_short,
     ).await;
 
-    // -- Parallel fan-out: Axon + Broca + Brain + Engram --
+    // - Parallel fan-out: Axon + Broca + Brain + Engram --
     let axon_channel = match req.action.as_str() {
         "task.blocked" | "error.raised" => "alerts",
         a if a.starts_with("task.") => "tasks",
@@ -137,7 +137,7 @@ pub async fn post_activity(
     })))
 }
 
-// -- Chiasm fan-out: find-or-create task, then update --
+// - Chiasm fan-out: find-or-create task, then update --
 
 async fn fanout_chiasm(
     http: &reqwest::Client,
@@ -197,14 +197,14 @@ async fn fanout_chiasm(
                 None => json!("create_failed"),
             }
         }
-        // Has existing task -- update it
+        // Has existing task - update it
         (_, Some(task_id)) => {
             match update_chiasm_task(http, engram_url, &auth, task_id, chiasm_status, summary).await {
                 true => json!({"updated": task_id}),
                 false => json!("update_failed"),
             }
         }
-        // No existing task -- auto-create then we're done
+        // No existing task - auto-create then we're done
         (_, None) => {
             match create_chiasm_task(http, engram_url, &auth, agent, project, summary).await {
                 Some(id) => {
@@ -281,7 +281,7 @@ async fn update_chiasm_task(
     }
 }
 
-// -- Axon fan-out --
+// - Axon fan-out --
 
 async fn fanout_axon(
     http: &reqwest::Client,
@@ -327,7 +327,7 @@ async fn fanout_axon(
     }
 }
 
-// -- Broca fan-out --
+// - Broca fan-out --
 
 async fn fanout_broca(
     http: &reqwest::Client,
@@ -363,7 +363,7 @@ async fn fanout_broca(
     }
 }
 
-// -- Engram fan-out --
+// - Engram fan-out --
 
 async fn fanout_engram(
     http: &reqwest::Client,

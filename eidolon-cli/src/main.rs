@@ -130,7 +130,7 @@ async fn cmd_status() -> Result<(), String> {
         .map_err(|e| format!("request failed: {}", e))?;
 
     if resp.status() == 401 {
-        return Err("unauthorized -- set EIDOLON_API_KEY".to_string());
+        return Err("unauthorized - set EIDOLON_API_KEY".to_string());
     }
 
     let body: Value = resp.json().await
@@ -160,7 +160,7 @@ async fn cmd_brain() -> Result<(), String> {
         .map_err(|e| format!("request failed: {}", e))?;
 
     if resp.status() == 401 {
-        return Err("unauthorized -- set EIDOLON_API_KEY".to_string());
+        return Err("unauthorized - set EIDOLON_API_KEY".to_string());
     }
 
     let body: Value = resp.json().await
@@ -188,7 +188,7 @@ async fn cmd_kill(session_id: &str) -> Result<(), String> {
         .map_err(|e| format!("request failed: {}", e))?;
 
     if resp.status() == 401 {
-        return Err("unauthorized -- set EIDOLON_API_KEY".to_string());
+        return Err("unauthorized - set EIDOLON_API_KEY".to_string());
     }
 
     let body: Value = resp.json().await
@@ -216,7 +216,7 @@ async fn cmd_task(task: &str, agent: Option<&str>, model: Option<&str>) -> Resul
         .map_err(|e| format!("submit failed: {}", e))?;
 
     if resp.status() == 401 {
-        return Err("unauthorized -- set EIDOLON_API_KEY".to_string());
+        return Err("unauthorized - set EIDOLON_API_KEY".to_string());
     }
 
     let body: Value = resp.json().await

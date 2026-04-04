@@ -152,19 +152,19 @@ Gate hook for Claude Code (place in `.claude/settings.json`):
 Command: ssh root@10.0.0.9 -p 22
 Decision: BLOCK
 Reason:   OVH VPS requires port 4822. Use: ssh -i ~/.ssh/id_ed25519 -p 4822 deploy@10.0.0.9.
-          DO NOT REBOOT -- LUKS vault will lock.
+          DO NOT REBOOT - LUKS vault will lock.
 
 Command: rm -rf /opt/application
 Decision: BLOCK
-Reason:   Destructive rm -rf on /home -- not allowed.
+Reason:   Destructive rm -rf on /home - not allowed.
 
 Command: systemctl reboot (targeting container-host)
 Decision: BLOCK
-Reason:   Reboot/shutdown of container-host blocked -- LUKS vault will lock.
+Reason:   Reboot/shutdown of container-host blocked - LUKS vault will lock.
 
-Command: psql production -- seed-demo-data.sql
+Command: psql production - seed-demo-data.sql
 Decision: BLOCK
-Reason:   Seeding demo data blocked -- do not seed demo data into any instance
+Reason:   Seeding demo data blocked - do not seed demo data into any instance
           without explicit authorization.
 
 Command: ls -la /opt/application
@@ -276,7 +276,7 @@ eidolon/
 
 ## Status
 
-Experimental. Phase 3.5 -- TUI stabilization and daemon integration.
+Experimental. Phase 3.5 - TUI stabilization and daemon integration.
 
 Working: action gate, living prompts, agent wrapping for Claude Code, session absorption, neural recall, dreaming, evolution, TUI with local LLM routing, daemon slash commands (/daemon, /brain, /sessions, /dream), 165+ tests including 72 security pentest tests. The gate is deployed and catching mistakes in live sessions.
 
@@ -292,4 +292,4 @@ Multi-user auth (per-user API keys with session isolation), optional TLS (native
 
 ## Credits
 
-Neural substrate designed from scratch -- no fine-tuned LLMs, no vector databases, no RAG pipelines. Hopfield networks extended with weighted graphs, interference resolution, and continuous online learning.
+Neural substrate designed from scratch - no fine-tuned LLMs, no vector databases, no RAG pipelines. Hopfield networks extended with weighted graphs, interference resolution, and continuous online learning.

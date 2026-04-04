@@ -44,12 +44,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(Arc::new(client))
             }
             Err(e) => {
-                eprintln!("[eidolon-tui] daemon connection failed: {} -- action intents will be unavailable", e);
+                eprintln!("[eidolon-tui] daemon connection failed: {} - action intents will be unavailable", e);
                 None
             }
         }
     } else {
-        eprintln!("[eidolon-tui] no daemon.api_key configured -- action intents will be unavailable");
+        eprintln!("[eidolon-tui] no daemon.api_key configured - action intents will be unavailable");
         None
     };
 
@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // Spawn llama-server sidecar if needed -- result piped through channel
+    // Spawn llama-server sidecar if needed - result piped through channel
     let mut sidecar_result_rx: Option<oneshot::Receiver<(SidecarStatus, u16)>> = None;
     if app.config.llm.base_url.is_none() && !app.config.llm.model_path.is_empty() {
         let server_path = app.config.llm.server_path.clone();
@@ -147,7 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.sidecar_status = SidecarStatus::Ready;
     }
 
-    // Health check runs in background -- we poll the result each frame
+    // Health check runs in background - we poll the result each frame
     let mut health_check_rx: Option<oneshot::Receiver<bool>> = None;
     let mut last_health_check = std::time::Instant::now();
 
@@ -285,7 +285,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let user_msg = app.pending_user_message.clone();
                             match decision.intent {
                                 eidolon_tui::conversation::router::Intent::Casual => {
-                                    // Stream already running -- just record the decision
+                                    // Stream already running - just record the decision
                                     app.pending_decision = Some(decision);
                                 }
                                 eidolon_tui::conversation::router::Intent::Memory => {
@@ -361,7 +361,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         Err(e) => {
-                            // Routing failed -- use keyword fallback to detect action intent
+                            // Routing failed - use keyword fallback to detect action intent
                             let fallback = RoutingDecision::keyword_fallback(&app.pending_user_message);
                             match fallback.intent {
                                 eidolon_tui::conversation::router::Intent::Action => {
@@ -485,7 +485,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let complexity_clone = complexity.clone();
 
                                                 app.add_gojo_message(&format!(
-                                                    "Spawning {} ({} -- {}) via daemon. Stand back.",
+                                                    "Spawning {} ({} - {}) via daemon. Stand back.",
                                                     agent_clone, complexity_clone, model_clone
                                                 ));
 
@@ -514,7 +514,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 });
                                             } else {
                                                 app.add_gojo_message(
-                                                    "Daemon not connected -- cannot spawn agents. Configure [daemon] in config.toml with url and api_key."
+                                                    "Daemon not connected - cannot spawn agents. Configure [daemon] in config.toml with url and api_key."
                                                 );
                                                 app.mode = AppMode::Normal;
                                             }
@@ -522,7 +522,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             app.mode = AppMode::Normal;
                                         }
                                     } else {
-                                        // User gave different instructions -- treat as new message
+                                        // User gave different instructions - treat as new message
                                         app.mode = AppMode::Normal;
                                         app.pending_decision = None;
                                         dispatch_message(&mut app, &llm_client, &engram_client, &system_prompt, msg);
@@ -587,7 +587,7 @@ fn dispatch_message(
 ) {
     app.pending_user_message = msg.clone();
 
-    // Start casual stream immediately -- no waiting
+    // Start casual stream immediately - no waiting
     fire_casual_stream(app, llm_client, system_prompt, &msg);
 
     // Run router in parallel

@@ -16,7 +16,7 @@ async fn brain_validate_action(
     command: &str,
     tool_name: &str,
 ) -> Option<(String, String, Vec<i64>)> {
-    // Only validate commands that do something -- skip empty/read-only
+    // Only validate commands that do something - skip empty/read-only
     if command.trim().is_empty() {
         return None;
     }
@@ -67,7 +67,7 @@ async fn brain_validate_action(
         }
     }
 
-    // Check contradictions -- if the brain resolved a conflict about this topic, share it
+    // Check contradictions - if the brain resolved a conflict about this topic, share it
     if !result.contradictions.is_empty() {
         let c = &result.contradictions[0];
         if let Some(winner) = result.activated.iter().find(|m| m.id == c.winner_id) {
@@ -83,7 +83,7 @@ async fn brain_validate_action(
 }
 
 /// Check if a command is related to what a memory is talking about.
-/// Simple keyword overlap -- the brain's activation already did the heavy lifting.
+/// Simple keyword overlap - the brain's activation already did the heavy lifting.
 fn command_matches_memory(command: &str, memory_content: &str) -> bool {
     let cmd_words: std::collections::HashSet<&str> = command
         .split_whitespace()
@@ -203,7 +203,7 @@ pub async fn gate_check(
         _ => {}
     }
 
-    // Empty command -- allow
+    // Empty command - allow
     if command.trim().is_empty() && tool_name != "Bash" {
         if let Some(mi) = modified_input {
             return Json(json!({"action": "allow", "modified_input": mi}));
@@ -356,13 +356,13 @@ pub fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String
 
     // Destructive rm patterns
     if cmd_lower.contains("rm -rf /") && !cmd_lower.contains("rm -rf /tmp") {
-        return Some("Destructive rm -rf on critical path -- not allowed".to_string());
+        return Some("Destructive rm -rf on critical path - not allowed".to_string());
     }
     if cmd_lower.contains("rm -rf ~/") {
-        return Some("Destructive rm -rf on home directory -- not allowed".to_string());
+        return Some("Destructive rm -rf on home directory - not allowed".to_string());
     }
     if cmd_lower.contains("rm -rf /home") {
-        return Some("Destructive rm -rf on /home -- not allowed".to_string());
+        return Some("Destructive rm -rf on /home - not allowed".to_string());
     }
 
     // Force push to protected branches
@@ -374,7 +374,7 @@ pub fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String
 
     // Hard reset
     if cmd_lower.contains("git reset --hard") {
-        return Some("git reset --hard is destructive -- use git stash instead".to_string());
+        return Some("git reset --hard is destructive - use git stash instead".to_string());
     }
 
     // Reboot/shutdown: check servers with no_reboot flag
@@ -385,7 +385,7 @@ pub fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String
                 let alias_match = server.aliases.iter().any(|a| cmd_lower.contains(&a.to_lowercase()));
                 if name_match || alias_match {
                     return Some(format!(
-                        "Reboot/shutdown of {} blocked -- {}",
+                        "Reboot/shutdown of {} blocked - {}",
                         server.name, server.notes
                     ));
                 }
@@ -393,13 +393,13 @@ pub fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String
         }
     }
 
-    // Seed + demo or seed + production -- prevent seeding real data
+    // Seed + demo or seed + production - prevent seeding real data
     if cmd_lower.contains("seed") {
         if cmd_lower.contains("demo") {
-            return Some("Seeding demo data blocked -- do not seed demo data into any instance without explicit authorization".to_string());
+            return Some("Seeding demo data blocked - do not seed demo data into any instance without explicit authorization".to_string());
         }
         if cmd_lower.contains("production") || cmd_lower.contains("prod") {
-            return Some("Seeding production data blocked -- do not seed real data into production without explicit authorization".to_string());
+            return Some("Seeding production data blocked - do not seed real data into production without explicit authorization".to_string());
         }
     }
 
@@ -421,7 +421,7 @@ pub fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String
         return Some("DROP TABLE statement requires manual confirmation".to_string());
     }
     if cmd_lower.contains("mkfs.") {
-        return Some("Disk format command blocked -- requires manual confirmation".to_string());
+        return Some("Disk format command blocked - requires manual confirmation".to_string());
     }
 
     None
@@ -585,10 +585,10 @@ pub async fn gate_complete(
     let summary = input.summary.trim().to_string();
 
     if summary.is_empty() {
-        tracing::warn!("gate/complete: blocked -- blank summary session={}", input.session_id);
+        tracing::warn!("gate/complete: blocked - blank summary session={}", input.session_id);
         return Json(json!({
             "allowed": false,
-            "reason": "Summary is required before completing a task -- store what you did"
+            "reason": "Summary is required before completing a task - store what you did"
         }));
     }
 
@@ -596,21 +596,21 @@ pub async fn gate_complete(
     let sessions = state.sessions.lock().await;
     match sessions.get_session(&input.session_id, user_filter) {
         None => {
-            tracing::warn!("gate/complete: blocked -- session not found id={}", input.session_id);
+            tracing::warn!("gate/complete: blocked - session not found id={}", input.session_id);
             Json(json!({
                 "allowed": false,
-                "reason": format!("Session '{}' not found -- register with Eidolon before starting work", input.session_id)
+                "reason": format!("Session '{}' not found - register with Eidolon before starting work", input.session_id)
             }))
         }
         Some(session) => {
             if session.engram_stores == 0 {
                 tracing::warn!(
-                    "gate/complete: blocked -- no engram stores session={} agent={}",
+                    "gate/complete: blocked - no engram stores session={} agent={}",
                     input.session_id, session.agent
                 );
                 Json(json!({
                     "allowed": false,
-                    "reason": "No Engram stores this session -- store at least one memory before completing"
+                    "reason": "No Engram stores this session - store at least one memory before completing"
                 }))
             } else {
                 tracing::info!(

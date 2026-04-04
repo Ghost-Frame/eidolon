@@ -147,7 +147,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
             let scrub = state.scrub_registry.lock().await;
             scrub.scrub(&session_id, &raw)
         };
-        // Absorb blocks with high importance -- these are correction signals
+        // Absorb blocks with high importance - these are correction signals
         absorb_to_brain(&state, &block_content, "issue", 8).await;
 
         // Also to Engram

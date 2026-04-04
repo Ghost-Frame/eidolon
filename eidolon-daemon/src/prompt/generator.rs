@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::AppState;
 use super::templates;
 
-// Credential scrubbing patterns -- never leak secrets into prompts
+// Credential scrubbing patterns - never leak secrets into prompts
 const SCRUB_PATTERNS: &[&str] = &[
     "password", "passwd", "secret", "token", "api_key", "apikey",
     "private_key", "bearer", "authorization", "credential",
@@ -31,7 +31,7 @@ fn scrub_credentials(text: &str) -> String {
 
         if is_credential_line {
             if line.contains('=') || (line.contains(':') && !line.contains("://") && !line.contains("path")) {
-                result.push_str("[CREDENTIAL REDACTED -- use credential manager]\n");
+                result.push_str("[CREDENTIAL REDACTED - use credential manager]\n");
                 continue;
             }
         }

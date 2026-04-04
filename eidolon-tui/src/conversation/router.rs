@@ -172,9 +172,9 @@ impl RoutingDecision {
         let system = r#"You are a routing system. Classify the user's intent and task complexity. Output JSON only.
 
 Complexity guide:
-- "light": simple tasks -- write a small file, fix a typo, rename something, quick lookup, one-file changes
-- "medium": moderate tasks -- implement a feature, debug an issue, refactor a module, multi-file edits
-- "heavy": complex tasks -- architectural changes, multi-system work, security-sensitive operations, large refactors"#;
+- "light": simple tasks - write a small file, fix a typo, rename something, quick lookup, one-file changes
+- "medium": moderate tasks - implement a feature, debug an issue, refactor a module, multi-file edits
+- "heavy": complex tasks - architectural changes, multi-system work, security-sensitive operations, large refactors"#;
         let msgs: &[(&str, &str)] = &[
             ("system", system),
             ("user", user_message),
