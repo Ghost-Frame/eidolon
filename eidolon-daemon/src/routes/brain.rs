@@ -30,6 +30,7 @@ pub struct BrainQueryRequest {
 
 pub async fn brain_query(
     State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<crate::UserIdentity>,
     Json(req): Json<BrainQueryRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if req.query.is_empty() {
@@ -45,6 +46,8 @@ pub async fn brain_query(
             Json(json!({"ok": false, "error": "query too long (max 4096 chars)"})),
         ));
     }
+
+    tracing::info!("brain_query: user={} query_len={}", user.0, req.query.len());
 
     // Call Engram /embed to get embedding vector
     let embedding: Vec<f32> = match crate::embed_text(
@@ -81,6 +84,7 @@ pub async fn brain_query(
     Ok(Json(json!({
         "ok": true,
         "result": result,
+        "user": user.0,
     })))
 }
 

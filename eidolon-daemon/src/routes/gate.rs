@@ -150,10 +150,10 @@ pub async fn gate_check(
             tracing::warn!("gate: secret resolution error: {} session={}", err, session_id);
         }
 
-        // Track tier-3 values for scrubbing
-        if !resolution.tier3_values.is_empty() {
+        // Track ALL resolved secret values for scrubbing (not just tier-3)
+        if !resolution.resolved_values.is_empty() {
             let mut scrub = state.scrub_registry.lock().await;
-            for val in &resolution.tier3_values {
+            for val in &resolution.resolved_values {
                 scrub.track(session_id, val.clone());
             }
         }
@@ -172,11 +172,24 @@ pub async fn gate_check(
         .unwrap_or("");
 
     // Track Engram store calls for session enforcement
+    // Require the command to actually invoke engram-cli store (not just mention it in echo/comments)
     let is_engram_store =
-        (tool_name == "Bash" && (
-            command.contains("engram-cli store") ||
-            (command.contains("/store") && command.contains(state.config.engram.url.as_str().split("//").last().unwrap_or("")))
-        )) ||
+        (tool_name == "Bash" && {
+            let cmd_trimmed = command.trim_start();
+            // Must start with engram-cli or have it after a shell operator, not inside echo/printf
+            let has_real_store = cmd_trimmed.starts_with("engram-cli store")
+                || command.contains("&& engram-cli store")
+                || command.contains("; engram-cli store")
+                || command.contains("| engram-cli store");
+            let has_curl_store = {
+                let engram_host = state.config.engram.url.as_str().split("//").last().unwrap_or("");
+                !engram_host.is_empty()
+                    && command.contains("/store")
+                    && command.contains(engram_host)
+                    && (cmd_trimmed.starts_with("curl") || command.contains("&& curl") || command.contains("; curl"))
+            };
+            has_real_store || has_curl_store
+        }) ||
         (tool_name.starts_with("mcp__") && tool_name.contains("store"));
 
     if is_engram_store && session_id != "unknown" {
@@ -416,6 +429,80 @@ pub fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String
         }
     }
 
+    // Secondary interpreter / encoding bypass detection
+    // These can be used to smuggle dangerous commands past substring checks
+    {
+        let tokens: Vec<&str> = cmd_lower.split_whitespace().collect();
+        for (i, token) in tokens.iter().enumerate() {
+            // python/python3 -c, perl/perl5 -e, ruby -e
+            // Also catch full-path invocations like /usr/bin/python3 and env-wrapped calls
+            let basename = token.rsplit('/').next().unwrap_or(token);
+            let is_interpreter = basename == "python" || basename == "python3"
+                || basename.starts_with("python3.")
+                || basename == "perl" || basename == "perl5"
+                || basename == "ruby";
+            // Also catch: env python3 -c
+            let is_env_interpreter = *token == "env" && i + 2 < tokens.len() && {
+                let next = tokens[i + 1];
+                let next_base = next.rsplit('/').next().unwrap_or(next);
+                next_base == "python" || next_base == "python3"
+                    || next_base.starts_with("python3.")
+                    || next_base == "perl" || next_base == "perl5"
+                    || next_base == "ruby"
+            };
+            if is_interpreter {
+                if let Some(flag) = tokens.get(i + 1) {
+                    if *flag == "-c" || *flag == "-e" {
+                        return Some(format!(
+                            "Inline code execution via {} {} blocked - use a script file instead",
+                            token, flag
+                        ));
+                    }
+                }
+            }
+            if is_env_interpreter {
+                // env python3 -c => flag is at i+2
+                if let Some(flag) = tokens.get(i + 2) {
+                    if *flag == "-c" || *flag == "-e" {
+                        return Some(format!(
+                            "Inline code execution via env {} {} blocked - use a script file instead",
+                            tokens[i + 1], flag
+                        ));
+                    }
+                }
+            }
+
+            // eval with command substitution or string argument
+            if *token == "eval" && i + 1 < tokens.len() {
+                return Some("eval command blocked - potential command injection vector".to_string());
+            }
+        }
+
+        // base64 decode piped to sh/bash (base64 -d, base64 --decode, base64 -D)
+        let has_base64_decode = cmd_lower.contains("base64 -d")
+            || cmd_lower.contains("base64 --decode")
+            || cmd_lower.contains("base64 -D"); // macOS variant
+        let has_shell_pipe = cmd_lower.contains("| sh")
+            || cmd_lower.contains("| bash")
+            || cmd_lower.contains("|sh")
+            || cmd_lower.contains("|bash")
+            || cmd_lower.contains("| /bin/sh")
+            || cmd_lower.contains("| /bin/bash");
+        if has_base64_decode && has_shell_pipe {
+            return Some("base64 decode piped to shell blocked - potential command obfuscation".to_string());
+        }
+
+        // xxd -r piped to shell
+        if cmd_lower.contains("xxd -r") && has_shell_pipe {
+            return Some("hex decode piped to shell blocked - potential command obfuscation".to_string());
+        }
+
+        // printf with octal/hex escapes piped to shell
+        if cmd_lower.contains("printf") && (cmd_lower.contains("\\x") || cmd_lower.contains("\\0")) && has_shell_pipe {
+            return Some("printf escape sequence piped to shell blocked - potential command obfuscation".to_string());
+        }
+    }
+
     // Drop table / format destructors
     if cmd_lower.contains("drop table") {
         return Some("DROP TABLE statement requires manual confirmation".to_string());
@@ -473,10 +560,60 @@ pub fn parse_ssh_target(command: &str) -> Option<SshTarget> {
     Some(SshTarget { user, host, port })
 }
 
+/// Check if an SSH target is a reserved/internal address that should be blocked (SSRF prevention).
+fn is_reserved_ssh_target(host: &str) -> bool {
+    let host_lower = host.to_lowercase();
+
+    // Loopback
+    if host_lower == "localhost"
+        || host_lower == "127.0.0.1"
+        || host_lower == "::1"
+        || host_lower == "0.0.0.0"
+        || host_lower == "[::1]"
+        || host_lower.starts_with("127.")
+    {
+        return true;
+    }
+
+    // IPv4-mapped IPv6 loopback
+    if host_lower.starts_with("::ffff:127.") {
+        return true;
+    }
+
+    // Cloud metadata endpoints
+    if host_lower == "169.254.169.254"
+        || host_lower == "metadata.google.internal"
+        || host_lower == "metadata.google"
+    {
+        return true;
+    }
+
+    // Link-local range (169.254.0.0/16)
+    if host_lower.starts_with("169.254.") {
+        return true;
+    }
+
+    // AWS IMDSv2 alternative
+    if host_lower == "fd00:ec2::254" {
+        return true;
+    }
+
+    false
+}
+
 async fn check_ssh_command(command: &str, state: &AppState) -> Option<(Value, Vec<i64>)> {
     let target = parse_ssh_target(command)?;
     let host = &target.host;
     let port = target.port;
+
+    // SSRF prevention: block SSH to reserved/internal targets
+    if is_reserved_ssh_target(host) {
+        tracing::warn!("gate: SSH SSRF blocked target={}", host);
+        return Some((json!({
+            "action": "block",
+            "message": format!("SSH to reserved/internal target {} blocked (SSRF prevention)", host),
+        }), vec![]));
+    }
 
     // Check against config server map (name or alias match)
     if let Some(server) = find_server(host, &state.config.servers) {

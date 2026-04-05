@@ -11,6 +11,7 @@ pub struct CreddClient {
 pub struct SecretResolution {
     pub modified_input: Option<Value>,
     pub tier3_values: Vec<String>,
+    pub resolved_values: Vec<String>,  // all resolved secret values for scrubbing
     pub errors: Vec<String>,
 }
 
@@ -152,6 +153,7 @@ pub async fn resolve_secrets(
     let mut modified = input.clone();
     let mut had_secrets = false;
     let mut tier3_values = Vec::new();
+    let mut resolved_values = Vec::new();
     let mut errors = Vec::new();
 
     // Recursively process the JSON tree
@@ -163,6 +165,7 @@ pub async fn resolve_secrets(
         trust_threshold,
         &mut had_secrets,
         &mut tier3_values,
+        &mut resolved_values,
         &mut errors,
     )
     .await;
@@ -170,6 +173,7 @@ pub async fn resolve_secrets(
     SecretResolution {
         modified_input: if had_secrets { Some(modified) } else { None },
         tier3_values,
+        resolved_values,
         errors,
     }
 }
@@ -191,6 +195,7 @@ async fn resolve_value(
     trust_threshold: u8,
     had_secrets: &mut bool,
     tier3_values: &mut Vec<String>,
+    resolved_values: &mut Vec<String>,
     errors: &mut Vec<String>,
 ) {
     match value {
@@ -202,6 +207,7 @@ async fn resolve_value(
                 session_id,
                 trust_threshold,
                 tier3_values,
+                resolved_values,
                 errors,
             )
             .await
@@ -223,6 +229,7 @@ async fn resolve_value(
                         trust_threshold,
                         had_secrets,
                         tier3_values,
+                        resolved_values,
                         errors,
                     ))
                     .await;
@@ -239,6 +246,7 @@ async fn resolve_value(
                     trust_threshold,
                     had_secrets,
                     tier3_values,
+                    resolved_values,
                     errors,
                 ))
                 .await;
@@ -256,6 +264,7 @@ async fn resolve_string(
     session_id: &str,
     trust_threshold: u8,
     tier3_values: &mut Vec<String>,
+    resolved_values: &mut Vec<String>,
     errors: &mut Vec<String>,
 ) -> Option<String> {
     let has_tier1 = secret_regex().is_match(input);
@@ -300,6 +309,7 @@ async fn resolve_string(
 
                     match resolved {
                         Ok(val) => {
+                            resolved_values.push(val.clone());
                             result = result.replace(&full_match, &val);
                         }
                         Err(e) => {
@@ -341,6 +351,7 @@ async fn resolve_string(
                     Ok(secret) => match CreddClient::extract_field(&secret, &field) {
                         Ok(val) => {
                             tier3_values.push(val.clone());
+                            resolved_values.push(val.clone());
                             result = result.replace(&full_match, &val);
                         }
                         Err(e) => {
