@@ -33,8 +33,15 @@ pub struct ActivityRequest {
 /// do not fail the request.
 pub async fn post_activity(
     State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<crate::UserIdentity>,
     Json(req): Json<ActivityRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    tracing::info!(
+        caller = %user.0,
+        agent = %req.agent,
+        "activity: authenticated caller posting as agent"
+    );
+
     // - Validate --
     if req.agent.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "agent is required"}))));
@@ -73,7 +80,7 @@ pub async fn post_activity(
     // - Chiasm: task tracking (needs sequential query-then-act) --
     let chiasm_result = fanout_chiasm(
         http, engram_url, &engram_key,
-        &req.agent, &req.action, project, &summary_short,
+        &req.agent, &req.action, project, &summary_short, &user.0,
     ).await;
 
     // - Parallel fan-out: Axon + Broca + Brain + Engram --
@@ -87,12 +94,12 @@ pub async fn post_activity(
 
     let axon_fut = fanout_axon(
         http, &axon_base, &engram_key,
-        &req.agent, axon_channel, &axon_type, &summary_short, &req.details,
+        &req.agent, axon_channel, &axon_type, &summary_short, &req.details, &user.0,
     );
 
     let broca_fut = fanout_broca(
         http, engram_url, &engram_key,
-        &req.agent, &req.action, &summary_short,
+        &req.agent, &req.action, &summary_short, &user.0,
     );
 
     let brain_content = format!(
@@ -118,7 +125,7 @@ pub async fn post_activity(
         if store_to_engram {
             fanout_engram(
                 http, engram_url, &engram_key,
-                &req.agent, &summary_short, brain_category,
+                &req.agent, &summary_short, brain_category, &user.0,
             ).await
         } else {
             "skipped".to_string()
@@ -129,7 +136,7 @@ pub async fn post_activity(
         if req.action.starts_with("drift.") || req.action.starts_with("session.") {
             fanout_thymus(
                 http, engram_url, &engram_key,
-                &req.agent, &req.action, &summary_short, &req.details,
+                &req.agent, &req.action, &summary_short, &req.details, &user.0,
             ).await
         } else {
             "skipped".to_string()
@@ -138,7 +145,7 @@ pub async fn post_activity(
 
     let soma_fut = fanout_soma(
         http, engram_url, &engram_key,
-        &req.agent, &req.action,
+        &req.agent, &req.action, &user.0,
     );
 
     let (axon_result, broca_result, _, engram_result, thymus_result, soma_result) =
@@ -168,6 +175,7 @@ async fn fanout_chiasm(
     action: &str,
     project: &str,
     summary: &str,
+    caller: &str,
 ) -> Value {
     let auth = format!("Bearer {}", engram_key);
 
@@ -213,7 +221,7 @@ async fn fanout_chiasm(
     match (action, existing_task_id) {
         // task.started always creates new
         ("task.started", _) => {
-            match create_chiasm_task(http, engram_url, &auth, agent, project, summary).await {
+            match create_chiasm_task(http, engram_url, &auth, agent, project, summary, caller).await {
                 Some(id) => json!({"created": id}),
                 None => json!("create_failed"),
             }
@@ -227,7 +235,7 @@ async fn fanout_chiasm(
         }
         // No existing task - auto-create then we're done
         (_, None) => {
-            match create_chiasm_task(http, engram_url, &auth, agent, project, summary).await {
+            match create_chiasm_task(http, engram_url, &auth, agent, project, summary, caller).await {
                 Some(id) => {
                     // If not "started", update status after creation
                     if chiasm_status != "active" {
@@ -248,6 +256,7 @@ async fn create_chiasm_task(
     agent: &str,
     project: &str,
     title: &str,
+    caller: &str,
 ) -> Option<i64> {
     let url = format!("{}/tasks", engram_url);
     let resp = http.post(&url)
@@ -258,6 +267,7 @@ async fn create_chiasm_task(
             "agent": agent,
             "project": project,
             "title": title,
+            "caller": caller,
         }))
         .send()
         .await
@@ -313,11 +323,13 @@ async fn fanout_axon(
     event_type: &str,
     summary: &str,
     details: &Option<Value>,
+    caller: &str,
 ) -> String {
     let url = format!("{}/publish", axon_base);
     let mut payload = json!({
         "agent": agent,
         "summary": summary,
+        "caller": caller,
     });
     if let Some(d) = details {
         payload.as_object_mut().unwrap().insert("details".to_string(), d.clone());
@@ -357,6 +369,7 @@ async fn fanout_broca(
     agent: &str,
     action: &str,
     summary: &str,
+    caller: &str,
 ) -> String {
     let url = format!("{}/broca/actions", engram_url);
     match http.post(&url)
@@ -368,6 +381,7 @@ async fn fanout_broca(
             "service": "eidolon",
             "action": action,
             "payload": { "summary": summary },
+            "caller": caller,
         }))
         .send()
         .await
@@ -393,6 +407,7 @@ async fn fanout_engram(
     agent: &str,
     summary: &str,
     category: &str,
+    caller: &str,
 ) -> String {
     let url = format!("{}/store", engram_url);
     let source = format!("{}-via-eidolon", agent);
@@ -405,6 +420,7 @@ async fn fanout_engram(
             "category": category,
             "source": source,
             "importance": 6,
+            "caller": caller,
         }))
         .send()
         .await
@@ -429,6 +445,7 @@ async fn fanout_soma(
     engram_key: &str,
     agent: &str,
     action: &str,
+    caller: &str,
 ) -> String {
     let auth = format!("Bearer {}", engram_key);
     let soma_base = format!("{}/soma", engram_url);
@@ -473,6 +490,7 @@ async fn fanout_soma(
                 .json(&json!({
                     "name": agent,
                     "type": "cli",
+                    "caller": caller,
                 }))
                 .send()
                 .await
@@ -495,7 +513,7 @@ async fn fanout_soma(
         .header("Authorization", &auth)
         .header("Content-Type", "application/json")
         .timeout(std::time::Duration::from_secs(3))
-        .json(&json!({ "status": status }))
+        .json(&json!({ "status": status, "caller": caller }))
         .send()
         .await
     {
@@ -521,6 +539,7 @@ async fn fanout_thymus(
     action: &str,
     summary: &str,
     details: &Option<Value>,
+    caller: &str,
 ) -> String {
     let auth = format!("Bearer {}", engram_key);
 
@@ -547,6 +566,7 @@ async fn fanout_thymus(
                     "drift_type": drift_type,
                     "severity": severity,
                     "signal": signal,
+                    "caller": caller,
                 }))
                 .send()
                 .await
@@ -583,6 +603,7 @@ async fn fanout_thymus(
                     "name": "session_compliance",
                     "value": value,
                     "tags": tags,
+                    "caller": caller,
                 }))
                 .send()
                 .await
