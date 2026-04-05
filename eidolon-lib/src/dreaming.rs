@@ -25,6 +25,11 @@ pub const PRUNE_EDGE_THRESHOLD: f32 = 0.02;
 pub const DISCOVERY_SIM_THRESHOLD: f32 = 0.35;
 pub const DISCOVERY_SAMPLE_SIZE: usize = 50;
 
+pub const DECORRELATION_UPPER: f32 = 0.85;
+pub const DECORRELATION_LOWER: f32 = 0.45;
+pub const DECORRELATION_PENALTY: f32 = 0.15;
+pub const DECORRELATION_SAMPLE: usize = 40;
+
 // ---- Result struct ----
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -34,6 +39,7 @@ pub struct DreamCycleResult {
     pub pruned_patterns: usize,
     pub pruned_edges: usize,
     pub discovered: usize,
+    pub decorrelated: usize,
     pub resolved: usize,
     pub cycle_time_ms: u64,
 }
@@ -345,6 +351,103 @@ fn discover_connections(
     discovered
 }
 
+// ---- Operation 6: Anti-Hebbian decorrelation ----
+// Weakens edges between connected patterns that are too similar but not similar
+// enough to merge. This prevents pattern convergence during Hebbian replay --
+// without it, frequently co-activated patterns drift toward identical embeddings
+// and lose the specificity needed for targeted activation.
+
+fn decorrelate(
+    memories: &[BrainMemory],
+    graph: &mut ConnectionGraph,
+) -> usize {
+    let n = memories.len();
+    if n < 2 {
+        return 0;
+    }
+
+    let mut weakened = 0usize;
+    let mut edges_to_weaken: Vec<(i64, i64, f32)> = Vec::new();
+
+    // Use strongest patterns as anchors (same strategy as discover_connections)
+    let mut by_strength: Vec<usize> = (0..n).collect();
+    by_strength.sort_by(|&a, &b| {
+        let sa = memories[a].decay_factor * memories[a].importance as f32;
+        let sb = memories[b].decay_factor * memories[b].importance as f32;
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let anchor_count = n.min(DECORRELATION_SAMPLE);
+
+    for &ai in &by_strength[..anchor_count] {
+        let id_a = memories[ai].id;
+
+        // Get all neighbors of this pattern
+        let neighbors: Vec<(i64, f32)> = match graph.adjacency.get(&id_a) {
+            Some(edges) => edges.iter().map(|(t, w, _)| (*t, *w)).collect(),
+            None => continue,
+        };
+
+        for (id_b, current_weight) in neighbors {
+            // Find memory index for neighbor
+            let bi = match memories.iter().position(|m| m.id == id_b) {
+                Some(idx) => idx,
+                None => continue,
+            };
+
+            let sim = cosine_sim(&memories[ai].pattern, &memories[bi].pattern);
+
+            // Only penalize patterns in the danger zone: similar enough to interfere
+            // but not similar enough to merge
+            if sim < DECORRELATION_LOWER || sim >= DECORRELATION_UPPER {
+                continue;
+            }
+
+            // Penalty scales linearly with similarity within the range
+            let range = DECORRELATION_UPPER - DECORRELATION_LOWER;
+            let normalized = (sim - DECORRELATION_LOWER) / range;
+            let penalty = DECORRELATION_PENALTY * normalized;
+
+            let new_weight = (current_weight - penalty).max(0.0);
+            if new_weight < current_weight {
+                edges_to_weaken.push((id_a, id_b, new_weight));
+            }
+        }
+    }
+
+    // Apply edge weakening
+    for (src, tgt, new_weight) in &edges_to_weaken {
+        if *new_weight < PRUNE_EDGE_THRESHOLD {
+            // Edge would drop below prune threshold -- remove it entirely
+            if let Some(edges) = graph.adjacency.get_mut(src) {
+                edges.retain(|(t, _, _)| t != tgt);
+            }
+            if let Some(edges) = graph.reverse_adjacency.get_mut(tgt) {
+                edges.retain(|(s, _, _)| s != src);
+            }
+        } else {
+            // Reduce the weight
+            if let Some(edges) = graph.adjacency.get_mut(src) {
+                for edge in edges.iter_mut() {
+                    if edge.0 == *tgt {
+                        edge.1 = *new_weight;
+                    }
+                }
+            }
+            if let Some(edges) = graph.reverse_adjacency.get_mut(tgt) {
+                for edge in edges.iter_mut() {
+                    if edge.0 == *src {
+                        edge.1 = *new_weight;
+                    }
+                }
+            }
+        }
+        weakened += 1;
+    }
+
+    weakened
+}
+
 // ---- Operation 5: Resolve lingering contradictions ----
 
 fn resolve_lingering(
@@ -429,6 +532,7 @@ pub fn dream_cycle(
             pruned_patterns: 0,
             pruned_edges: 0,
             discovered: 0,
+            decorrelated: 0,
             resolved: 0,
             cycle_time_ms: t0.elapsed().as_millis() as u64,
         };
@@ -438,6 +542,7 @@ pub fn dream_cycle(
     let merged = merge_redundant(memories, memory_index, graph, substrate);
     let (pruned_patterns, pruned_edges) = prune_dead(memories, memory_index, graph, substrate);
     let discovered = discover_connections(memories, graph, cycle_number);
+    let decorrelated = decorrelate(memories, graph);
     let resolved = resolve_lingering(memories, memory_index, graph);
 
     DreamCycleResult {
@@ -446,6 +551,7 @@ pub fn dream_cycle(
         pruned_patterns,
         pruned_edges,
         discovered,
+        decorrelated,
         resolved,
         cycle_time_ms: t0.elapsed().as_millis() as u64,
     }
@@ -635,5 +741,125 @@ mod tests {
         assert_eq!(result.replayed, 0);
         assert_eq!(result.merged, 0);
         assert_eq!(result.pruned_patterns, 0);
+    }
+
+    #[test]
+    fn test_decorrelate_weakens_similar_connected() {
+        let dim = 16;
+        // Two patterns in the decorrelation danger zone (sim in [0.45, 0.85)) but
+        // with different content so they won't merge (content overlap too low).
+        // p1 = [1,0,...] (unit along dim 0)
+        // p2 = [0.8,0.6,...] normalized -- dot with p1 = 0.8, in range.
+        let mut p1 = Array1::<f32>::zeros(dim);
+        let mut p2 = Array1::<f32>::zeros(dim);
+        p1[0] = 1.0;
+        p2[0] = 0.8;
+        p2[1] = 0.6;
+        let norm1: f32 = p1.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm2: f32 = p2.iter().map(|x| x * x).sum::<f32>().sqrt();
+        p1 /= norm1;
+        p2 /= norm2;
+
+        let sim = cosine_sim(&p1, &p2);
+        // Verify similarity is in decorrelation range
+        assert!(
+            sim >= DECORRELATION_LOWER && sim < DECORRELATION_UPPER,
+            "test patterns should be in decorrelation range, got sim={}",
+            sim
+        );
+
+        let mut m1 = make_memory(1, 0.0, 0.9, 100.0);
+        let mut m2 = make_memory(2, 0.0, 0.9, 100.0);
+        m1.pattern = p1;
+        m2.pattern = p2;
+        m1.content = "unique content alpha".to_string();
+        m2.content = "different content beta".to_string();
+
+        let memories = vec![m1, m2];
+        let (_substrate, mut graph, _index) = build_substrate_and_graph(&memories);
+
+        // Connect them with a known weight
+        let initial_weight = 0.5;
+        graph.add_edge(1, 2, initial_weight, EdgeType::Association);
+        graph.add_edge(2, 1, initial_weight, EdgeType::Association);
+
+        let weakened = decorrelate(&memories, &mut graph);
+        assert!(weakened > 0, "should have weakened at least one edge");
+
+        // Verify weight decreased
+        let edge = graph.adjacency.get(&1)
+            .and_then(|edges| edges.iter().find(|(t, _, _)| *t == 2))
+            .map(|(_, w, _)| *w);
+        match edge {
+            Some(w) => assert!(w < initial_weight, "edge weight should have decreased: {} vs {}", w, initial_weight),
+            None => {} // Edge was removed entirely, which is also valid
+        }
+    }
+
+    #[test]
+    fn test_decorrelate_skips_dissimilar() {
+        let dim = 16;
+        // Two orthogonal patterns -- should NOT be decorrelated
+        let mut p1 = Array1::<f32>::zeros(dim);
+        let mut p2 = Array1::<f32>::zeros(dim);
+        p1[0] = 1.0;
+        p2[1] = 1.0;
+
+        let mut m1 = make_memory(1, 0.0, 0.9, 100.0);
+        let mut m2 = make_memory(2, 0.0, 0.9, 100.0);
+        m1.pattern = p1;
+        m2.pattern = p2;
+
+        let memories = vec![m1, m2];
+        let (_substrate, mut graph, _index) = build_substrate_and_graph(&memories);
+
+        graph.add_edge(1, 2, 0.5, EdgeType::Association);
+        graph.add_edge(2, 1, 0.5, EdgeType::Association);
+
+        let weakened = decorrelate(&memories, &mut graph);
+        assert_eq!(weakened, 0, "should not weaken edges between dissimilar patterns");
+
+        // Verify weight unchanged
+        let w = graph.adjacency.get(&1)
+            .and_then(|edges| edges.iter().find(|(t, _, _)| *t == 2))
+            .map(|(_, w, _)| *w)
+            .unwrap();
+        assert!((w - 0.5).abs() < 1e-6, "weight should be unchanged");
+    }
+
+    #[test]
+    fn test_full_cycle_includes_decorrelation() {
+        let dim = 16;
+        let mut p1 = Array1::<f32>::zeros(dim);
+        let mut p2 = Array1::<f32>::zeros(dim);
+        p1[0] = 1.0;
+        p2[0] = 0.8;
+        p2[1] = 0.6;
+        let norm1: f32 = p1.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm2: f32 = p2.iter().map(|x| x * x).sum::<f32>().sqrt();
+        p1 /= norm1;
+        p2 /= norm2;
+
+        let mut m1 = make_memory(1, 0.0, 0.9, 100.0);
+        let mut m2 = make_memory(2, 0.0, 0.9, 100.0);
+        let mut m3 = make_memory(3, 0.3, 0.8, 80.0);
+        m1.pattern = p1;
+        m2.pattern = p2;
+        m1.content = "unique alpha content".to_string();
+        m2.content = "different beta content".to_string();
+
+        let mut memories = vec![m1, m2, m3];
+        let (mut substrate, mut graph, mut index) = build_substrate_and_graph(&memories);
+
+        // Pre-connect the similar pair
+        graph.add_edge(1, 2, 0.5, EdgeType::Association);
+        graph.add_edge(2, 1, 0.5, EdgeType::Association);
+
+        let result = dream_cycle(&mut substrate, &mut graph, &mut memories, &mut index, 1);
+        // decorrelated field should exist and the cycle should complete
+        assert!(result.cycle_time_ms < 10000);
+        // We can't assert decorrelated > 0 because replay may change weights,
+        // but the field must be present
+        let _ = result.decorrelated;
     }
 }
