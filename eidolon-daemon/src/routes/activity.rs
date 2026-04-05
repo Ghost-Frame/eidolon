@@ -68,6 +68,25 @@ pub async fn post_activity(
         }
     }
 
+    // Enforce agent allowlist for non-system users
+    if user.0 != "system" {
+        let allowed = state.config.auth.api_keys.iter()
+            .find(|e| e.user == user.0)
+            .and_then(|e| e.agent_allowlist.as_ref());
+        if let Some(allowlist) = allowed {
+            if !allowlist.iter().any(|a| a == &req.agent) {
+                tracing::warn!(
+                    "activity: agent spoofing blocked caller={} claimed_agent={} allowed={:?}",
+                    user.0, req.agent, allowlist
+                );
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error": format!("user '{}' not authorized to emit as agent '{}'", user.0, req.agent)})),
+                ));
+            }
+        }
+    }
+
     let engram_url = &state.config.engram.url;
     let axon_base = state.config.engram.axon_url.as_deref()
         .map(|u| u.trim_end_matches("/publish").to_string())

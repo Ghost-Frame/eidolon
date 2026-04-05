@@ -192,6 +192,10 @@ fn default_gate_fail_mode() -> String {
 pub struct ApiKeyEntry {
     pub key: String,
     pub user: String,
+    /// If Some, this user can only emit activity as these agent names.
+    /// If None, any agent name is allowed (backwards compatible default).
+    #[serde(default)]
+    pub agent_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,6 +286,8 @@ struct RawAuthConfig {
 struct RawApiKeyEntry {
     key: String,
     user: String,
+    #[serde(default)]
+    agent_allowlist: Option<Vec<String>>,
 }
 
 fn default_home() -> String {
@@ -381,6 +387,7 @@ impl Config {
                 api_keys.push(ApiKeyEntry {
                     key: env_key,
                     user: "default".to_string(),
+                    agent_allowlist: None,
                 });
             }
         }
@@ -392,6 +399,7 @@ impl Config {
             api_keys.push(ApiKeyEntry {
                 key: entry.key,
                 user: entry.user,
+                agent_allowlist: entry.agent_allowlist,
             });
         }
 
@@ -401,6 +409,7 @@ impl Config {
                     api_keys.push(ApiKeyEntry {
                         key: single_key,
                         user: "default".to_string(),
+                        agent_allowlist: None,
                     });
                 }
             }
@@ -462,6 +471,7 @@ impl Config {
                 api_keys: vec![ApiKeyEntry {
                     key: api_key,
                     user: "default".to_string(),
+                    agent_allowlist: None,
                 }],
             };
             cfg.engram.api_key = std::env::var("ENGRAM_API_KEY").ok();
@@ -511,6 +521,7 @@ impl Config {
                     self.auth.api_keys.push(ApiKeyEntry {
                         key,
                         user: "default".to_string(),
+                        agent_allowlist: None,
                     });
                 }
                 tracing::info!("bootstrapped eidolon api key from credd (instance={})", instance_name);
