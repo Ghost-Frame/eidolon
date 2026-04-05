@@ -502,6 +502,7 @@ name = "eidolon-daemon"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "chrono",
  "dashmap",
  "eidolon-lib",

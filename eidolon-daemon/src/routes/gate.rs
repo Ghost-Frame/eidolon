@@ -601,17 +601,80 @@ fn is_reserved_ssh_target(host: &str) -> bool {
     false
 }
 
+/// Resolve a hostname and check if ANY of its IPs are reserved/internal.
+/// Fails closed: if DNS resolution fails or times out, returns true (block).
+async fn resolves_to_reserved(host: &str) -> bool {
+    // Skip for raw IPs (already checked by is_reserved_ssh_target)
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
+
+    let lookup_target = format!("{}:22", host);
+    let resolved = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::net::lookup_host(lookup_target.as_str()),
+    ).await;
+
+    match resolved {
+        Ok(Ok(addrs)) => {
+            for addr in addrs {
+                match addr.ip() {
+                    std::net::IpAddr::V4(v4) => {
+                        if v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() {
+                            tracing::warn!("gate: SSH DNS rebinding: {} -> {}", host, v4);
+                            return true;
+                        }
+                        if v4.octets()[0] == 169 && v4.octets()[1] == 254 {
+                            tracing::warn!("gate: SSH DNS rebinding: {} -> link-local {}", host, v4);
+                            return true;
+                        }
+                    }
+                    std::net::IpAddr::V6(v6) => {
+                        if v6.is_loopback() || v6.is_unspecified() {
+                            tracing::warn!("gate: SSH DNS rebinding: {} -> {}", host, v6);
+                            return true;
+                        }
+                        if let Some(v4) = v6.to_ipv4_mapped() {
+                            if v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() {
+                                tracing::warn!("gate: SSH DNS rebinding: {} -> mapped {}", host, v4);
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("gate: SSH DNS failed for {}: {} (blocking)", host, e);
+            true
+        }
+        Err(_) => {
+            tracing::warn!("gate: SSH DNS timeout for {} (blocking)", host);
+            true
+        }
+    }
+}
+
 async fn check_ssh_command(command: &str, state: &AppState) -> Option<(Value, Vec<i64>)> {
     let target = parse_ssh_target(command)?;
     let host = &target.host;
     let port = target.port;
 
-    // SSRF prevention: block SSH to reserved/internal targets
+    // SSRF prevention: block SSH to reserved/internal targets (hostname check)
     if is_reserved_ssh_target(host) {
         tracing::warn!("gate: SSH SSRF blocked target={}", host);
         return Some((json!({
             "action": "block",
             "message": format!("SSH to reserved/internal target {} blocked (SSRF prevention)", host),
+        }), vec![]));
+    }
+
+    // DNS rebinding prevention: resolve hostname and check resolved IPs
+    if resolves_to_reserved(host).await {
+        return Some((json!({
+            "action": "block",
+            "message": format!("SSH target {} resolves to reserved/internal IP (DNS rebinding prevention)", host),
         }), vec![]));
     }
 
