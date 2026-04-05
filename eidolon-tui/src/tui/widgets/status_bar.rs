@@ -80,11 +80,13 @@ impl Widget for StatusBar<'_> {
             SidecarStatus::Ready => "llm: ready",
             SidecarStatus::Starting => "llm: starting...",
             SidecarStatus::Stopped => "llm: stopped",
+            SidecarStatus::Degraded(_) => "llm: degraded",
             SidecarStatus::Error(_) => "llm: error",
         };
         let llm_color = match self.llm_status {
             SidecarStatus::Ready => self.theme.success,
             SidecarStatus::Starting => self.theme.warning,
+            SidecarStatus::Degraded(_) => self.theme.warning,
             _ => self.theme.error,
         };
 

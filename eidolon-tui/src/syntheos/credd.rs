@@ -1,5 +1,3 @@
-use serde_json::json;
-
 #[derive(Debug, Clone)]
 pub struct CreddClient {
     base_url: String,

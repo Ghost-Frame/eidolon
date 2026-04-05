@@ -1,8 +1,12 @@
+pub mod app;
 pub mod config;
 pub mod tui;
 pub mod llm;
 pub mod conversation;
+pub mod intelligence;
 pub mod syntheos;
-pub mod agents;
 pub mod dataset;
 pub mod daemon;
+pub mod commands;
+pub mod dispatch;
+pub mod event_loop;

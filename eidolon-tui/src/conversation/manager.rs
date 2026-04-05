@@ -1,4 +1,5 @@
 use chrono::Utc;
+use crate::tui::widgets::chat_area::ChatMessage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Role {
@@ -15,6 +16,7 @@ pub struct Message {
     pub pinned: bool,
 }
 
+#[allow(dead_code)]
 pub struct ConversationManager {
     messages: Vec<Message>,
     system_prompt: String,
@@ -38,6 +40,10 @@ impl ConversationManager {
         }
     }
 
+    pub fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
     pub fn add_user_message(&mut self, content: &str) {
         self.messages.push(Message {
             role: Role::User,
@@ -54,6 +60,41 @@ impl ConversationManager {
             timestamp: Utc::now(),
             pinned: false,
         });
+    }
+
+    /// Clear all messages except the system prompt.
+    pub fn clear(&mut self) {
+        self.messages.truncate(1);
+    }
+
+    /// Get messages formatted for UI display (excludes system prompt).
+    pub fn display_messages(&self) -> Vec<ChatMessage> {
+        self.messages[1..].iter()
+            .map(|m| ChatMessage {
+                sender: match m.role {
+                    Role::User => "You".to_string(),
+                    Role::Assistant => "Gojo".to_string(),
+                    Role::System => "System".to_string(),
+                },
+                content: m.content.clone(),
+                is_user: m.role == Role::User,
+            })
+            .collect()
+    }
+
+    /// Build message history for LLM API calls (system prompt + context window).
+    pub fn build_api_messages(&self) -> Vec<(String, String)> {
+        self.get_context_window()
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    Role::System => "system".to_string(),
+                    Role::User => "user".to_string(),
+                    Role::Assistant => "assistant".to_string(),
+                };
+                (role, m.content.clone())
+            })
+            .collect()
     }
 
     pub fn get_context_window(&self) -> Vec<&Message> {
@@ -89,7 +130,7 @@ impl ConversationManager {
     pub fn estimate_context_tokens(&self) -> u32 {
         let window = self.get_context_window();
         let total_chars: usize = window.iter().map(|m| m.content.len()).sum();
-        (total_chars / 4) as u32
+        (total_chars as f64 / 3.5) as u32
     }
 
     pub fn get_compacted_messages(&self) -> Vec<Message> {

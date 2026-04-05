@@ -1,6 +1,7 @@
 use serde_json::json;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ChiasmClient {
     base_url: String,
     api_key: String,

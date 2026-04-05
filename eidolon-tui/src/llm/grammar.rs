@@ -14,6 +14,31 @@ pub fn intent_routing_grammar() -> String {
     s.join("\n") + "\n"
 }
 
+/// GBNF grammar for context compression output.
+/// Constrains to plain text summary (no JSON structure needed).
+pub fn compression_grammar() -> String {
+    // Compression output is free-form text, but constrain to printable chars
+    // and reasonable length to prevent runaway generation.
+    let s = [
+        r#"root ::= sentence (". " sentence)* "."?"#,
+        r#"sentence ::= [A-Za-z0-9_/.:,;'"\-()@#$%&*+=<>!? ]+"#,
+    ];
+    s.join("\n") + "\n"
+}
+
+/// GBNF grammar for prompt distillation output.
+/// Constrains to valid JSON with objective, constraints, context, expected_output.
+pub fn distillation_grammar() -> String {
+    let s = [
+        r#"root ::= "{" ws "\"objective\":" ws string "," ws "\"constraints\":" ws constraints "," ws "\"context\":" ws string "," ws "\"expected_output\":" ws string "}" ws"#,
+        r#"constraints ::= "[" ws (string ("," ws string)*)? "]""#,
+        r#"string ::= "\"" chars "\"" "#,
+        r#"chars ::= [a-zA-Z0-9_ .,'!?:;/\-()@#$%&*+=<>{}|~`\[\]\n\\]* "#,
+        "ws ::= [ \\t\\n]*",
+    ];
+    s.join("\n") + "\n"
+}
+
 /// GBNF grammar for tool calls. Constrains output to valid tool invocation JSON.
 pub fn tool_call_grammar() -> String {
     let s = [
@@ -31,6 +56,21 @@ pub fn tool_call_grammar() -> String {
         r#"value ::= string | number | "true" | "false" | "null""#,
         r#"number ::= "-"? [0-9]+ ("." [0-9]+)?"#,
         r#"string ::= "\"" [a-zA-Z0-9_ .,'!?:;/@#$%^&*()+={}|<>~`\-]* "\"" "#,
+        "ws ::= [ \\t\\n]*",
+    ];
+    s.join("\n") + "\n"
+}
+
+/// GBNF grammar for synthesis output.
+/// Constrains to valid JSON with summary, files_changed, key_actions, warnings fields.
+pub fn synthesis_grammar() -> String {
+    let s = [
+        r#"root ::= "{" ws "\"summary\":" ws string "," ws "\"files_changed\":" ws files_changed "," ws "\"key_actions\":" ws key_actions "," ws "\"warnings\":" ws warnings "}" ws"#,
+        r#"files_changed ::= "[" ws (string ("," ws string)*)? "]""#,
+        r#"key_actions ::= "[" ws (string ("," ws string)*)? "]""#,
+        r#"warnings ::= "[" ws (string ("," ws string)*)? "]""#,
+        r#"string ::= "\"" chars "\"" "#,
+        r#"chars ::= [a-zA-Z0-9_ .,'!?:;/\-()@#$%&*+=<>{}|~`\[\]\n\\]* "#,
         "ws ::= [ \\t\\n]*",
     ];
     s.join("\n") + "\n"
