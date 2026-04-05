@@ -203,9 +203,14 @@ fn merge_redundant(
         for &id in &to_remove {
             graph.nodes.remove(&id);
             graph.adjacency.remove(&id);
+            graph.reverse_adjacency.remove(&id);
             // Remove all edges pointing to this id
             for edges in graph.adjacency.values_mut() {
                 edges.retain(|(t, _, _)| *t != id);
+            }
+            // Remove all reverse edges pointing to this id
+            for edges in graph.reverse_adjacency.values_mut() {
+                edges.retain(|(s, _, _)| *s != id);
             }
         }
     }
@@ -250,8 +255,12 @@ fn prune_dead(
         for &id in &dead_set {
             graph.nodes.remove(&id);
             graph.adjacency.remove(&id);
+            graph.reverse_adjacency.remove(&id);
             for edges in graph.adjacency.values_mut() {
                 edges.retain(|(t, _, _)| *t != id);
+            }
+            for edges in graph.reverse_adjacency.values_mut() {
+                edges.retain(|(s, _, _)| *s != id);
             }
         }
 
@@ -385,6 +394,9 @@ fn resolve_lingering(
     for (src, tgt) in &edges_to_remove {
         if let Some(edges) = graph.adjacency.get_mut(src) {
             edges.retain(|(t, _, et)| !(*t == *tgt && *et == EdgeType::Contradiction));
+        }
+        if let Some(edges) = graph.reverse_adjacency.get_mut(tgt) {
+            edges.retain(|(s, _, et)| !(*s == *src && *et == EdgeType::Contradiction));
         }
     }
 

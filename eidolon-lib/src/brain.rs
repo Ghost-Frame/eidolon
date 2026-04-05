@@ -27,6 +27,12 @@ use crate::types::EvolutionStatsResult;
 #[cfg(feature = "evolution")]
 use crate::evolution::{EvolutionState, FeedbackSignal};
 
+#[cfg(feature = "reasoning")]
+use crate::types::{Inference, ReasoningConfig};
+
+#[cfg(feature = "reasoning")]
+use crate::reasoning;
+
 pub struct Brain {
     pub memories: Vec<BrainMemory>,
     pub memory_index: HashMap<i64, usize>,
@@ -38,6 +44,10 @@ pub struct Brain {
     pub data_dir: Option<String>,
     #[cfg(feature = "evolution")]
     pub evolution: EvolutionState,
+    #[cfg(feature = "reasoning")]
+    pub reasoning_config: ReasoningConfig,
+    #[cfg(feature = "reasoning")]
+    pub cached_rules: Vec<Inference>,
 }
 
 impl Brain {
@@ -53,6 +63,10 @@ impl Brain {
             data_dir: None,
             #[cfg(feature = "evolution")]
             evolution: EvolutionState::new(),
+            #[cfg(feature = "reasoning")]
+            reasoning_config: ReasoningConfig::default(),
+            #[cfg(feature = "reasoning")]
+            cached_rules: Vec::new(),
         }
     }
 
@@ -210,6 +224,8 @@ impl Brain {
             return QueryResult {
                 activated: vec![],
                 contradictions: vec![],
+                #[cfg(feature = "reasoning")]
+                inferences: vec![],
                 total_patterns: 0,
                 query_time_ms: t0.elapsed().as_secs_f64() * 1000.0,
             };
@@ -314,6 +330,47 @@ impl Brain {
             }
         }
 
+        // Step 7: Reasoning pass (feature-gated)
+        #[cfg(feature = "reasoning")]
+        let inferences = {
+            let activated_map: HashMap<i64, f32> = merged.iter()
+                .map(|(&id, &(act, _, _))| (id, act))
+                .collect();
+
+            let mut all_inferences: Vec<Inference> = Vec::new();
+
+            // 7a. Contradiction synthesis
+            all_inferences.extend(reasoning::synthesize_contradictions(
+                &contradiction_pairs, &self.memories, &self.memory_index, &self.reasoning_config,
+            ));
+
+            // 7b. Abductive reasoning
+            all_inferences.extend(reasoning::abductive_reason(
+                &self.graph, &self.memories, &self.memory_index, &activated_map, &self.reasoning_config,
+            ));
+
+            // 7c. Predictive reasoning
+            all_inferences.extend(reasoning::predictive_reason(
+                &self.graph, &self.memories, &self.memory_index, &activated_map, &self.reasoning_config,
+            ));
+
+            // 7d. Filter cached rules
+            all_inferences.extend(reasoning::filter_cached_rules(
+                &self.cached_rules, &activated_map, &self.reasoning_config,
+            ));
+
+            // 7e. Analogical reasoning (if enabled)
+            all_inferences.extend(reasoning::analogical_reason(
+                &self.graph, &self.substrate, &self.memories, &self.memory_index,
+                &activated_map, &query_pattern, &self.reasoning_config,
+            ));
+
+            // Sort and truncate
+            all_inferences.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+            all_inferences.truncate(self.reasoning_config.max_inferences);
+            all_inferences
+        };
+
         // Recall boost + update activations
         for (id, (activation, _, _)) in &mut merged {
             if let Some(&idx) = self.memory_index.get(id) {
@@ -352,6 +409,8 @@ impl Brain {
         QueryResult {
             activated,
             contradictions: contradiction_pairs,
+            #[cfg(feature = "reasoning")]
+            inferences,
             total_patterns: self.memories.len(),
             query_time_ms: t0.elapsed().as_secs_f64() * 1000.0,
         }
@@ -445,13 +504,21 @@ impl Brain {
 
     pub fn run_dream_cycle(&mut self) -> DreamCycleResult {
         self.dream_cycle_count += 1;
-        dream_cycle(
+        let result = dream_cycle(
             &mut self.substrate,
             &mut self.graph,
             &mut self.memories,
             &mut self.memory_index,
             self.dream_cycle_count,
-        )
+        );
+
+        // Phase 6: Rule extraction and caching
+        #[cfg(feature = "reasoning")]
+        {
+            self.cached_rules = reasoning::extract_rules(&self.graph, &self.memories, &self.memory_index, 0.6);
+        }
+
+        result
     }
 
     pub fn get_stats(&self) -> StatsResult {

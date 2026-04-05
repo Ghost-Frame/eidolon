@@ -26,6 +26,8 @@ pub struct BrainQueryRequest {
     pub top_k: Option<usize>,
     pub beta: Option<f32>,
     pub spread_hops: Option<usize>,
+    #[cfg(feature = "reasoning")]
+    pub reasoning: Option<bool>,
 }
 
 pub async fn brain_query(
