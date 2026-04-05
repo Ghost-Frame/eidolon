@@ -125,9 +125,9 @@ async fn main() {
                         let mut brain_guard = state_dream.brain.lock().await;
                         let result = brain_guard.run_dream_cycle();
                         tracing::info!(
-                            "dream cycle: replayed={} merged={} pruned={} discovered={} resolved={} ({}ms)",
+                            "dream cycle: replayed={} merged={} pruned={} discovered={} decorrelated={} resolved={} ({}ms)",
                             result.replayed, result.merged, result.pruned_patterns,
-                            result.discovered, result.resolved, result.cycle_time_ms
+                            result.discovered, result.decorrelated, result.resolved, result.cycle_time_ms
                         );
 
                         // Run evolution training step after each dream cycle
