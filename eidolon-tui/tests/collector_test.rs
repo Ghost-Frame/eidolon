@@ -15,6 +15,11 @@ fn test_collector_writes_jsonl() {
         intent: "memory".to_string(),
         tools_called: vec!["engram_search".to_string()],
         user_override: false,
+        compression_ratio: None,
+        model_selected: None,
+        user_override_model: None,
+        estimated_cost: None,
+        pipeline_ran: false,
     };
 
     collector.record(example).unwrap();
@@ -41,6 +46,11 @@ fn test_collector_appends_multiple() {
             intent: "casual".to_string(),
             tools_called: vec![],
             user_override: false,
+            compression_ratio: None,
+            model_selected: None,
+            user_override_model: None,
+            estimated_cost: None,
+            pipeline_ran: false,
         }).unwrap();
     }
     collector.flush().unwrap();

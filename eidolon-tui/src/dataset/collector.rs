@@ -11,6 +11,12 @@ pub struct TrainingExample {
     pub intent: String,
     pub tools_called: Vec<String>,
     pub user_override: bool,
+    // Intelligence pipeline fields
+    pub compression_ratio: Option<f64>,
+    pub model_selected: Option<String>,
+    pub user_override_model: Option<String>,
+    pub estimated_cost: Option<f64>,
+    pub pipeline_ran: bool,
 }
 
 #[derive(Serialize)]
@@ -31,6 +37,15 @@ struct JsonlMetadata {
     tools_called: Vec<String>,
     user_override: bool,
     timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compression_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_selected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_override_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    estimated_cost: Option<f64>,
+    pipeline_ran: bool,
 }
 
 pub struct DatasetCollector {
@@ -67,6 +82,11 @@ impl DatasetCollector {
                 tools_called: example.tools_called,
                 user_override: example.user_override,
                 timestamp: chrono::Utc::now().to_rfc3339(),
+                compression_ratio: example.compression_ratio,
+                model_selected: example.model_selected,
+                user_override_model: example.user_override_model,
+                estimated_cost: example.estimated_cost,
+                pipeline_ran: example.pipeline_ran,
             },
         };
 
@@ -174,6 +194,11 @@ mod tests {
                     intent: "casual".to_string(),
                     tools_called: vec![],
                     user_override: false,
+                    compression_ratio: None,
+                    model_selected: None,
+                    user_override_model: None,
+                    estimated_cost: None,
+                    pipeline_ran: false,
                 })
                 .unwrap();
         }

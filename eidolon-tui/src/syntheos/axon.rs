@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AxonClient {
     base_url: String,
     api_key: String,

@@ -17,11 +17,11 @@ pub struct ChatMessage {
 pub struct ChatArea<'a> {
     theme: &'a Theme,
     messages: &'a [ChatMessage],
-    scroll_offset: u16,
+    scroll_offset: usize,
 }
 
 impl<'a> ChatArea<'a> {
-    pub fn new(theme: &'a Theme, messages: &'a [ChatMessage], scroll_offset: u16) -> Self {
+    pub fn new(theme: &'a Theme, messages: &'a [ChatMessage], scroll_offset: usize) -> Self {
         Self { theme, messages, scroll_offset }
     }
 }
@@ -61,7 +61,7 @@ impl Widget for ChatArea<'_> {
 
         let paragraph = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .scroll((self.scroll_offset, 0));
+            .scroll((self.scroll_offset as u16, 0));
 
         paragraph.render(inner, buf);
     }

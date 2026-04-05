@@ -277,3 +277,23 @@ impl Config {
         }
     }
 }
+
+/// Resolve short model aliases to full model IDs.
+pub fn resolve_model_alias(input: &str) -> String {
+    match input.to_lowercase().as_str() {
+        // Claude
+        "haiku" => "claude-haiku-4-5-20251001".to_string(),
+        "sonnet" => "claude-sonnet-4-6".to_string(),
+        "opus" => "claude-opus-4-6".to_string(),
+        // Codex / OpenAI
+        "5.4" => "gpt-5.4".to_string(),
+        "5.4-mini" => "gpt-5.4-mini".to_string(),
+        "5.3-codex" => "gpt-5.3-codex".to_string(),
+        "5.2-codex" => "gpt-5.2-codex".to_string(),
+        "5.2" => "gpt-5.2".to_string(),
+        "5.1-max" => "gpt-5.1-codex-max".to_string(),
+        "5.1-mini" => "gpt-5.1-codex-mini".to_string(),
+        // Pass through anything else as-is
+        other => other.to_string(),
+    }
+}

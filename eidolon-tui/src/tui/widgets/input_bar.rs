@@ -45,8 +45,6 @@ impl Widget for InputBar<'_> {
         let chars: Vec<char> = self.content.chars().collect();
         let visible_start = scroll_offset;
         let visible_end = (scroll_offset + visible_width).min(chars.len());
-        let cursor_in_view = cursor_pos - scroll_offset;
-
         let visible_before: String = chars[visible_start..cursor_pos.min(visible_end)].iter().collect();
         let cursor_char = if cursor_pos < chars.len() {
             chars[cursor_pos].to_string()
