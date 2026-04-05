@@ -297,3 +297,7 @@ eidolon/
 ---
 
 Neural substrate designed from scratch. No fine-tuned LLMs, no vector databases, no RAG pipelines. Hopfield networks extended with weighted graphs, interference resolution, and continuous online learning.
+
+---
+
+Support: **support@syntheos.dev** · Security: **security@syntheos.dev** · [Security Policy](SECURITY.md)
