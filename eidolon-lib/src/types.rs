@@ -41,6 +41,8 @@ pub enum EdgeType {
     Association,
     Temporal,
     Contradiction,
+    Causal,
+    Resolves,
 }
 
 impl EdgeType {
@@ -49,6 +51,8 @@ impl EdgeType {
             EdgeType::Association => "association",
             EdgeType::Temporal => "temporal",
             EdgeType::Contradiction => "contradiction",
+            EdgeType::Causal => "causal",
+            EdgeType::Resolves => "resolves",
         }
     }
 
@@ -56,6 +60,8 @@ impl EdgeType {
         match s {
             "temporal" => EdgeType::Temporal,
             "contradiction" => EdgeType::Contradiction,
+            "causal" => EdgeType::Causal,
+            "resolves" => EdgeType::Resolves,
             _ => EdgeType::Association,
         }
     }
@@ -225,6 +231,9 @@ pub struct ContradictionPair {
 pub struct QueryResult {
     pub activated: Vec<ActivatedMemory>,
     pub contradictions: Vec<ContradictionPair>,
+    #[cfg(feature = "reasoning")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inferences: Vec<Inference>,
     pub total_patterns: usize,
     pub query_time_ms: f64,
 }
@@ -248,4 +257,54 @@ pub struct EvolutionStatsResult {
     pub num_node_weights: usize,
     pub num_edge_weights: usize,
     pub learning_rate: f32,
+}
+
+// ---- Reasoning types (feature-gated) ----
+
+#[cfg(feature = "reasoning")]
+#[derive(Debug, Clone, Serialize)]
+pub struct Inference {
+    pub id: String,
+    pub kind: InferenceKind,
+    pub content: String,
+    pub confidence: f32,
+    pub source_ids: Vec<i64>,
+    pub source_edges: Vec<(i64, i64)>,
+}
+
+#[cfg(feature = "reasoning")]
+#[derive(Debug, Clone, Serialize)]
+pub enum InferenceKind {
+    Abductive,
+    Predictive,
+    Synthesis,
+    Rule,
+    Analogical,
+}
+
+#[cfg(feature = "reasoning")]
+#[derive(Debug, Clone)]
+pub struct ReasoningConfig {
+    pub abductive: bool,
+    pub predictive: bool,
+    pub synthesis: bool,
+    pub rule_extraction: bool,
+    pub analogical: bool,
+    pub max_inferences: usize,
+    pub min_confidence: f32,
+}
+
+#[cfg(feature = "reasoning")]
+impl Default for ReasoningConfig {
+    fn default() -> Self {
+        ReasoningConfig {
+            abductive: true,
+            predictive: true,
+            synthesis: true,
+            rule_extraction: true,
+            analogical: false, // Most expensive, disabled by default
+            max_inferences: 5,
+            min_confidence: 0.3,
+        }
+    }
 }

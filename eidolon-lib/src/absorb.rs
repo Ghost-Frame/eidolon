@@ -87,6 +87,50 @@ pub fn absorb_memory(
         graph.add_edge(memory.id, target_id, weight, EdgeType::Association);
         graph.add_edge(target_id, memory.id, weight, EdgeType::Association);
     }
+
+    // Step 7: Causal edge detection
+    // Look for temporal neighbors with causal language
+    let causal_keywords = [
+        "because", "caused by", "due to", "resulted in", "led to",
+        "broke", "fixed", "since", "therefore", "consequently",
+        "as a result", "thanks to", "triggered", "after",
+    ];
+
+    for existing in existing_memories {
+        if existing.id == memory.id || existing.pattern.len() == 0 {
+            continue;
+        }
+        let existing_created = parse_datetime_approx(&existing.created_at);
+        let time_diff = (new_created - existing_created).abs();
+
+        // Only consider temporal neighbors (<24h) with moderate similarity
+        if time_diff > TEMPORAL_WINDOW_SECS {
+            continue;
+        }
+        let sim = cosine_sim(&memory.pattern, &existing.pattern);
+        if sim < 0.3 || sim > 0.75 {
+            continue; // Too dissimilar or too similar (likely contradiction/duplicate)
+        }
+
+        // Check for causal language -- require 2+ causal keywords to reduce false positives
+        let content_lower = memory.content.to_lowercase();
+        let causal_count = causal_keywords.iter()
+            .filter(|kw| content_lower.contains(*kw))
+            .count();
+
+        if causal_count >= 2 {
+            // New memory references cause -> existing is the cause, new is the effect
+            graph.add_edge(existing.id, memory.id, sim, EdgeType::Causal);
+            // Also check reverse: if existing content has causal language pointing to new
+            let existing_lower = existing.content.to_lowercase();
+            let existing_causal = causal_keywords.iter()
+                .filter(|kw| existing_lower.contains(*kw))
+                .count();
+            if existing_causal >= 2 {
+                graph.add_edge(memory.id, existing.id, sim, EdgeType::Causal);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

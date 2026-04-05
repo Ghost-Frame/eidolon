@@ -10,5 +10,7 @@ pub mod dreaming;
 
 #[cfg(feature = "evolution")]
 pub mod evolution;
+#[cfg(feature = "reasoning")]
+pub mod reasoning;
 pub mod instincts;
 pub mod brain;

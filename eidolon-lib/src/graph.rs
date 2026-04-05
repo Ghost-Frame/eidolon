@@ -8,6 +8,7 @@ pub const MIN_EDGE_WEIGHT: f32 = 0.01;
 #[derive(Debug)]
 pub struct ConnectionGraph {
     pub adjacency: HashMap<i64, Vec<(i64, f32, EdgeType)>>,
+    pub reverse_adjacency: HashMap<i64, Vec<(i64, f32, EdgeType)>>,
     pub nodes: HashSet<i64>,
 }
 
@@ -15,6 +16,7 @@ impl ConnectionGraph {
     pub fn new() -> Self {
         ConnectionGraph {
             adjacency: HashMap::new(),
+            reverse_adjacency: HashMap::new(),
             nodes: HashSet::new(),
         }
     }
@@ -22,6 +24,7 @@ impl ConnectionGraph {
     pub fn add_node(&mut self, id: i64) {
         self.nodes.insert(id);
         self.adjacency.entry(id).or_default();
+        self.reverse_adjacency.entry(id).or_default();
     }
 
     pub fn add_edge(&mut self, source: i64, target: i64, weight: f32, edge_type: EdgeType) {
@@ -31,9 +34,17 @@ impl ConnectionGraph {
         // Update if edge exists, otherwise append
         if let Some(e) = edges.iter_mut().find(|(t, _, _)| *t == target) {
             e.1 = weight;
+            e.2 = edge_type.clone();
+        } else {
+            edges.push((target, weight, edge_type.clone()));
+        }
+        // Also maintain reverse adjacency
+        let rev_edges = self.reverse_adjacency.entry(target).or_default();
+        if let Some(e) = rev_edges.iter_mut().find(|(s, _, _)| *s == source) {
+            e.1 = weight;
             e.2 = edge_type;
         } else {
-            edges.push((target, weight, edge_type));
+            rev_edges.push((source, weight, edge_type));
         }
     }
 
@@ -129,6 +140,34 @@ impl ConnectionGraph {
             edges.iter_mut().for_each(|e| e.1 *= rate);
             edges.retain(|(_, w, _)| *w >= min_weight);
         }
+        for edges in self.reverse_adjacency.values_mut() {
+            edges.iter_mut().for_each(|e| e.1 *= rate);
+            edges.retain(|(_, w, _)| *w >= min_weight);
+        }
+    }
+
+    /// Get predecessors: nodes that have edges pointing TO this node, filtered by edge type.
+    pub fn predecessors(&self, id: i64, edge_type: &EdgeType) -> Vec<(i64, f32)> {
+        self.reverse_adjacency.get(&id)
+            .map(|edges| {
+                edges.iter()
+                    .filter(|(_, _, et)| et == edge_type)
+                    .map(|(source, weight, _)| (*source, *weight))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get successors: nodes this node has edges pointing TO, filtered by edge type.
+    pub fn successors(&self, id: i64, edge_type: &EdgeType) -> Vec<(i64, f32)> {
+        self.adjacency.get(&id)
+            .map(|edges| {
+                edges.iter()
+                    .filter(|(_, _, et)| et == edge_type)
+                    .map(|(target, weight, _)| (*target, *weight))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -137,6 +176,7 @@ impl Default for ConnectionGraph {
         Self::new()
     }
 }
+
 
 #[cfg(test)]
 mod tests {
