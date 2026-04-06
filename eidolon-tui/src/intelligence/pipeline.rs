@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use crate::config::AgentsConfig;
+use crate::embedding::AsyncEmbeddingProvider;
 use crate::llm::client::LlmClient;
 use crate::syntheos::engram::EngramClient;
 use crate::intelligence::budget::{ModelFamily, TokenBudget};
@@ -72,6 +73,7 @@ impl Pipeline {
         decision: &RoutingDecision,
         agents_config: &AgentsConfig,
         engram_client: &Option<Arc<EngramClient>>,
+        _embed_provider: &Option<Arc<dyn AsyncEmbeddingProvider>>,
     ) -> PipelineResult {
         // Step 1: Compress context
         let compression = self.compressor.compress(history, user_msg).await;

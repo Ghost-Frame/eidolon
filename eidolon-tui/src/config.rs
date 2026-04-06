@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -11,6 +11,7 @@ pub struct Config {
     pub tui: TuiConfig,
     pub brain: BrainConfig,
     pub session: SessionConfig,
+    pub embedding: EmbeddingConfig,
     pub daemon: DaemonConfig,
     pub claude: ClaudeConfig,
 }
@@ -96,6 +97,39 @@ pub struct SessionConfig {
     pub max_context_messages: u32,
 }
 
+/// Embedding provider configuration -- mirrors eidolon-daemon's EmbeddingConfig.
+/// Default: Engram (uses the [engram] section's URL and API key).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "provider", rename_all = "lowercase")]
+pub enum EmbeddingConfig {
+    Engram {
+        #[serde(default = "default_embed_dim")]
+        dim: usize,
+    },
+    Openai {
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default = "default_openai_dim")]
+        dim: usize,
+    },
+    Http {
+        url: String,
+        #[serde(default = "default_embed_dim")]
+        dim: usize,
+        #[serde(default)]
+        auth_header: Option<String>,
+    },
+}
+
+fn default_embed_dim() -> usize { 1024 }
+fn default_openai_dim() -> usize { 1536 }
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        EmbeddingConfig::Engram { dim: 1024 }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DaemonConfig {
@@ -122,6 +156,7 @@ impl Default for Config {
             tui: TuiConfig::default(),
             brain: BrainConfig::default(),
             session: SessionConfig::default(),
+            embedding: EmbeddingConfig::default(),
             daemon: DaemonConfig::default(),
             claude: ClaudeConfig::default(),
         }
@@ -300,6 +335,51 @@ impl Config {
                     mode
                 );
             }
+        }
+    }
+}
+
+/// Build an embedding provider from the config.
+/// Returns None if the provider can't be constructed (e.g. missing API key).
+pub fn build_embed_provider(config: &Config) -> Option<std::sync::Arc<dyn crate::embedding::AsyncEmbeddingProvider>> {
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .ok()?;
+
+    match &config.embedding {
+        EmbeddingConfig::Engram { dim } => {
+            let api_key = if config.engram.api_key.is_empty() {
+                None
+            } else {
+                Some(config.engram.api_key.clone())
+            };
+            let provider = crate::embedding::engram::EngramProvider::new(
+                http,
+                config.engram.url.clone(),
+                api_key,
+                *dim,
+            );
+            Some(std::sync::Arc::new(provider))
+        }
+        EmbeddingConfig::Openai { model, dim } => {
+            let api_key = std::env::var("OPENAI_API_KEY").ok()?;
+            let provider = crate::embedding::openai::OpenaiProvider::new(
+                http,
+                api_key,
+                model.clone(),
+                *dim,
+            );
+            Some(std::sync::Arc::new(provider))
+        }
+        EmbeddingConfig::Http { url, dim, auth_header } => {
+            let provider = crate::embedding::http::HttpProvider::new(
+                http,
+                url.clone(),
+                *dim,
+                auth_header.clone(),
+            );
+            Some(std::sync::Arc::new(provider))
         }
     }
 }

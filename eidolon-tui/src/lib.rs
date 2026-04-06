@@ -10,3 +10,4 @@ pub mod daemon;
 pub mod commands;
 pub mod dispatch;
 pub mod event_loop;
+pub mod embedding;

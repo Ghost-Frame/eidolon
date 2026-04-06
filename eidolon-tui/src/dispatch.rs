@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::embedding::AsyncEmbeddingProvider;
 use crate::llm::client::LlmClient;
 use crate::syntheos::engram::EngramClient;
 use crate::conversation::router::RoutingDecision;
@@ -12,6 +13,7 @@ pub fn dispatch_message(
     app: &mut App,
     llm_client: &Arc<LlmClient>,
     _engram_client: &Option<Arc<EngramClient>>,
+    _embed_provider: &Option<Arc<dyn AsyncEmbeddingProvider>>,
     msg: String,
 ) {
     app.pending_user_message = msg.clone();

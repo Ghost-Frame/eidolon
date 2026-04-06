@@ -15,6 +15,7 @@ use crate::intelligence::pipeline::Pipeline;
 use crate::intelligence::synthesizer::Synthesizer;
 use crate::llm::client::LlmClient;
 use crate::llm::sidecar::{LlamaSidecar, SidecarStatus};
+use crate::embedding::AsyncEmbeddingProvider;
 use crate::syntheos::engram::EngramClient;
 use crate::tui::terminal;
 use crate::app::InputTarget;
@@ -73,6 +74,10 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
+
+    // --- INIT EMBEDDING PROVIDER (optional, config-driven) ---
+    let embed_provider: Option<Arc<dyn AsyncEmbeddingProvider>> =
+        crate::config::build_embed_provider(&config);
 
     let llm_base_url = app.config.llm.base_url.clone()
         .unwrap_or_else(|| format!("http://localhost:{}", app.config.llm.port));
@@ -427,6 +432,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                         let umsg = user_msg.clone();
                                         let agents_cfg = app.config.agents.clone();
                                         let engram = engram_client.clone();
+                                        let embed = embed_provider.clone();
                                         let dec = decision;
 
                                         let (tx, rx) = oneshot::channel();
@@ -435,7 +441,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                         tokio::spawn(async move {
                                             let mut pipeline = Pipeline::new(client, &model_name);
                                             let result = pipeline.run(
-                                                &umsg, &history, &dec, &agents_cfg, &engram,
+                                                &umsg, &history, &dec, &agents_cfg, &engram, &embed,
                                             ).await;
                                             let _ = tx.send(result);
                                         });
@@ -795,7 +801,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                         } else if app.mode == AppMode::AwaitingConfirmation {
                                             handle_confirmation(&mut app, &msg, &daemon_client);
                                         } else if app.mode == AppMode::Normal {
-                                            dispatch::dispatch_message(&mut app, &llm_client, &engram_client, msg);
+                                            dispatch::dispatch_message(&mut app, &llm_client, &engram_client, &embed_provider, msg);
                                         }
                                     }
                                 }
