@@ -419,7 +419,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                         app.daemon_prompt_rx = Some(rx);
 
                                         tokio::spawn(async move {
-                                            let result = daemon.generate_prompt(&umsg, "claude").await;
+                                            let result = daemon.generate_prompt(&umsg, "claude-code").await;
                                             let _ = tx.send(result);
                                         });
                                     } else if matches!(app.sidecar_status, SidecarStatus::Ready) {
@@ -449,7 +449,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                     } else {
                                         // Neither daemon nor sidecar available -- skip optimization
                                         let agent = decision.agent_needed.clone()
-                                            .unwrap_or_else(|| "claude".to_string());
+                                            .unwrap_or_else(|| "claude-code".to_string());
                                         let model = decision.select_model(&app.config.agents);
                                         let complexity = format!("{:?}", decision.complexity).to_lowercase();
                                         let reasoning = decision.reasoning.clone();
@@ -472,7 +472,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                     app.pending_response.clear();
                                     app.token_rx = None;
                                     let agent = fallback.agent_needed.clone()
-                                        .unwrap_or_else(|| "claude".to_string());
+                                        .unwrap_or_else(|| "claude-code".to_string());
                                     let model = fallback.select_model(&app.config.agents);
                                     app.pending_decision = Some(fallback);
                                     app.mode = AppMode::AwaitingConfirmation;
@@ -505,15 +505,18 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                         match result {
                             Ok(prompt) => {
                                 // Show the daemon-generated prompt in Claude panel for preview
-                                app.claude_session.messages.push(
-                                    format!("--- Pending dispatch (daemon prompt) ---\n{}", prompt)
-                                );
+                                app.claude_session.state = ClaudeSessionState::Starting;
+                                app.claude_session.messages.clear();
+                                app.claude_session.messages.push("--- Pending dispatch (daemon prompt) ---".to_string());
+                                for line in prompt.lines() {
+                                    app.claude_session.messages.push(line.to_string());
+                                }
                                 app.pending_daemon_prompt = Some(prompt.clone());
 
                                 // Show approval in left panel with agent/model info
                                 let agent = app.pending_decision.as_ref()
                                     .and_then(|d| d.agent_needed.clone())
-                                    .unwrap_or_else(|| "claude".to_string());
+                                    .unwrap_or_else(|| "claude-code".to_string());
                                 let model = app.pending_decision.as_ref()
                                     .map(|d| d.select_model(&app.config.agents))
                                     .unwrap_or_else(|| "unknown".to_string());
@@ -531,7 +534,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                 app.pending_daemon_prompt = None;
                                 let agent = app.pending_decision.as_ref()
                                     .and_then(|d| d.agent_needed.clone())
-                                    .unwrap_or_else(|| "claude".to_string());
+                                    .unwrap_or_else(|| "claude-code".to_string());
                                 let model = app.pending_decision.as_ref()
                                     .map(|d| d.select_model(&app.config.agents))
                                     .unwrap_or_else(|| "unknown".to_string());
@@ -549,7 +552,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                         app.mode = AppMode::AwaitingConfirmation;
                         if let Some(ref decision) = app.pending_decision {
                             let agent = decision.agent_needed.clone()
-                                .unwrap_or_else(|| "claude".to_string());
+                                .unwrap_or_else(|| "claude-code".to_string());
                             let model = decision.select_model(&app.config.agents);
                             app.add_system_message(&format!(
                                 "Daemon prompt task crashed. Use {} ({}) with original message?\n\nSay yes to proceed.",
@@ -569,8 +572,12 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                         app.pipeline_rx = None;
                         let approval_text = result.format_for_approval();
                         // Show preview in Claude panel
-                        let preview = format!("--- Pending dispatch ---\n{}", result.distilled.format_for_display());
-                        app.claude_session.messages.push(preview);
+                        app.claude_session.state = ClaudeSessionState::Starting;
+                        app.claude_session.messages.clear();
+                        app.claude_session.messages.push("--- Pending dispatch ---".to_string());
+                        for line in result.distilled.format_for_display().lines() {
+                            app.claude_session.messages.push(line.to_string());
+                        }
                         app.pending_pipeline_result = Some(result);
                         app.mode = AppMode::AwaitingConfirmation;
                         app.add_system_message(&approval_text);
@@ -582,7 +589,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                         app.mode = AppMode::AwaitingConfirmation;
                         if let Some(ref decision) = app.pending_decision {
                             let agent = decision.agent_needed.clone()
-                                .unwrap_or_else(|| "claude".to_string());
+                                .unwrap_or_else(|| "claude-code".to_string());
                             let model = decision.select_model(&app.config.agents);
                             app.add_system_message(&format!(
                                 "Pipeline failed. Use {} ({})?\n\nSay yes to proceed.",
@@ -1004,7 +1011,7 @@ fn handle_confirmation(
         if let Some(decision) = app.pending_decision.take() {
             let agent_name = decision.agent_needed
                 .clone()
-                .unwrap_or_else(|| "claude".to_string());
+                .unwrap_or_else(|| "claude-code".to_string());
             // Priority: daemon prompt > local pipeline distilled > raw user message
             let task = app.pending_daemon_prompt.take()
                 .or_else(|| app.pending_pipeline_result.as_ref().map(|p| p.distilled.format_for_agent()))

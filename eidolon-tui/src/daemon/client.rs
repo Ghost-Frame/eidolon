@@ -92,7 +92,20 @@ impl DaemonClient {
             .replace("https://", "wss://");
         let url = format!("{}/task/{}/stream", ws_url, session_id);
 
-        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+        let request = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(&url)
+            .header("Authorization", self.auth_header())
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+            .header("Host", tokio_tungstenite::tungstenite::http::Uri::try_from(&url).ok()
+                .and_then(|u| u.host().map(|h| h.to_string()))
+                .unwrap_or_default())
+            .body(())
+            .map_err(|e| format!("WebSocket request build failed: {}", e))?;
+
+        let (ws_stream, _) = tokio_tungstenite::connect_async(request)
             .await
             .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 

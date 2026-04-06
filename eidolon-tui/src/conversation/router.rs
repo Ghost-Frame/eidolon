@@ -108,9 +108,10 @@ impl RoutingDecision {
 
         let action_keywords = [
             "fix", "implement", "build", "deploy", "execute", "run",
-            "refactor", "create", "delete", "install", "update",
-            "debug", "write", "add feature", "spawn", "launch",
-            "start a", "open a", "make a", "set up", "configure",
+            "refactor", "delete", "install", "update",
+            "debug", "write code", "write a file", "write a script",
+            "add feature", "spawn", "launch",
+            "start a server", "set up", "configure",
         ];
         let memory_keywords = [
             "remember", "recall", "search engram", "what was",
@@ -170,9 +171,9 @@ impl RoutingDecision {
         let system = r#"You are a routing system. Classify the user's intent and task complexity. Respond with ONLY a JSON object, no other text.
 
 Intent values:
-- "casual": general chat, questions, greetings, opinions
+- "casual": general chat, questions, greetings, opinions, creative writing (stories, poems, lyrics), explanations, advice
 - "memory": recall past info, search history, "what was", "remember when"
-- "action": do something with code/tools -- fix, build, deploy, create, debug, implement
+- "action": do something with code/tools -- fix, build, deploy, create files, debug, implement code. NOT creative writing or conversation.
 
 Complexity values:
 - "light": simple tasks -- write a small file, fix a typo, rename something, quick lookup

@@ -101,7 +101,7 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 
 **Guardian Daemon** (`eidolon-daemon`): Persistent service at `:7700`. Manages agent sessions, generates living prompts from brain state, runs the action gate on every outbound command, absorbs session learnings back into the brain. Unified `/activity` endpoint handles fan-out to all Syntheos services.
 
-**Terminal UI** (`eidolon-tui`): One frontend for the daemon. Interactive TUI with a local LLM sidecar (llama-server on GPU) for routing and casual chat. Agent spawning, gate checks, brain queries, and session management all go through the daemon. Not required -- any agent that hits the daemon's API gets the same intelligence layer.
+**Terminal UI** (`eidolon-tui`): One frontend for the daemon. Interactive TUI with a local LLM sidecar (llama-server on GPU) for routing and casual chat. Runs the Eidolon personality (Trickster Judge) locally. Pluggable embedding providers (Engram, OpenAI, generic HTTP) selected via `[embedding]` config. Auto-stores conversation exchanges to Engram and fires growth reflections after each exchange. Collects training data as JSONL for fine-tuning. Agent spawning, gate checks, brain queries, and session management all go through the daemon. Not required -- any agent that hits the daemon's API gets the same intelligence layer.
 
 **CLI** (`eidolon-cli`): Submit tasks and query status from the command line.
 
@@ -349,7 +349,7 @@ The daemon calls `credd get together api-key` during initialization and stores t
 ### Prerequisites
 
 - Rust 1.75+
-- [Engram](https://github/Ghost-Frame/engram) running and accessible
+- [Engram](https://github.com/Ghost-Frame/engram) running and accessible
 
 ### Build
 

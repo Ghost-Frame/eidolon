@@ -5,7 +5,7 @@ Guidelines for contributing to the neural brain and guardian daemon.
 ## Development Setup
 
 ```bash
-git clone https://codeberg.org/GhostFrame/eidolon.git
+git clone https://github.com/Ghost-Frame/eidolon.git
 cd eidolon
 
 # Enable pre-commit hook (blocks private info leaks)
@@ -17,7 +17,7 @@ cargo build --release --workspace
 
 **Requirements:**
 - Rust 1.75+
-- [Engram](https://codeberg.org/GhostFrame/engram) running and accessible (the daemon talks to it)
+- [Engram](https://github.com/Ghost-Frame/engram) running and accessible (the daemon talks to it)
 
 ## Architecture
 
