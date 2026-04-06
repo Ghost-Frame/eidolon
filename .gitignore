@@ -33,3 +33,9 @@ config/eidolon.toml
 
 # Agent planning docs (internal development process)
 docs/superpowers/
+
+# Security audit prompts (internal use only)
+eidolon-security-audit-prompt.md
+
+# Deploy scripts (contain infrastructure-specific IPs/ports)
+scripts/deploy-*.sh
