@@ -350,12 +350,98 @@ pub async fn gate_check(
         }
     }
 
+    // Tools requiring human approval via TUI (only when session is known)
+    const APPROVAL_TOOLS: &[&str] = &["Bash", "WebFetch", "WebSearch"];
+    if session_id != "unknown" && APPROVAL_TOOLS.contains(&tool_name) {
+        let approval_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+        let summary = if !command.is_empty() {
+            let truncated: String = command.chars().take(120).collect();
+            format!("{}: {}", tool_name, truncated)
+        } else {
+            let url_or_query = effective_input.get("url")
+                .or_else(|| effective_input.get("query"))
+                .or_else(|| effective_input.get("prompt"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no details)");
+            let truncated: String = url_or_query.chars().take(120).collect();
+            format!("{}: {}", tool_name, truncated)
+        };
+
+        // Inject permission request into session output
+        {
+            let mut sessions = state.sessions.lock().await;
+            sessions.append_output(session_id, format!("[permission:{}:{}] {}", approval_id, tool_name, summary));
+        }
+
+        // Create oneshot channel for approval
+        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+        {
+            let mut approvals = state.pending_approvals.lock().await;
+            approvals.insert(approval_id.clone(), tx);
+        }
+
+        // Wait for approval with timeout
+        let approved = match tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            rx,
+        ).await {
+            Ok(Ok(decision)) => decision,
+            _ => {
+                // Timeout or channel closed -- deny
+                let mut approvals = state.pending_approvals.lock().await;
+                approvals.remove(&approval_id);
+                false
+            }
+        };
+
+        // Clean up
+        {
+            let mut approvals = state.pending_approvals.lock().await;
+            approvals.remove(&approval_id);
+        }
+
+        if approved {
+            tracing::info!("gate: APPROVED by user tool={} session={}", tool_name, session_id);
+            let tool_input = effective_input.clone();
+            return Json(json!({"action": "allow", "modified_input": tool_input}));
+        } else {
+            tracing::warn!("gate: DENIED by user tool={} session={}", tool_name, session_id);
+            {
+                let mut sessions = state.sessions.lock().await;
+                sessions.append_output(session_id, format!("[permission_denied:{}] {} denied by user", approval_id, tool_name));
+            }
+            return Json(json!({
+                "action": "block",
+                "message": format!("{} denied by user", tool_name),
+            }));
+        }
+    }
+
     // Default: allow (with modified_input if secrets were resolved)
     tracing::debug!("gate: allow tool={} session={}", tool_name, session_id);
     if let Some(mi) = modified_input {
         Json(json!({"action": "allow", "modified_input": mi}))
     } else {
         Json(json!({"action": "allow"}))
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct GateRespondRequest {
+    pub approval_id: String,
+    pub allow: bool,
+}
+
+pub async fn gate_respond(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<GateRespondRequest>,
+) -> Json<Value> {
+    let mut approvals = state.pending_approvals.lock().await;
+    if let Some(tx) = approvals.remove(&input.approval_id) {
+        let _ = tx.send(input.allow);
+        Json(json!({"ok": true}))
+    } else {
+        Json(json!({"ok": false, "error": "approval not found or expired"}))
     }
 }
 
@@ -555,45 +641,90 @@ pub fn parse_ssh_target(command: &str) -> Option<SshTarget> {
     Some(SshTarget { user, host, port })
 }
 
-/// Check if an SSH target is a reserved/internal address that should be blocked (SSRF prevention).
-fn is_reserved_ssh_target(host: &str) -> bool {
+/// Check if an SSH target is a reserved/internal address (SSRF prevention).
+/// Parses IPs properly including octal, hex, and decimal-encoded representations.
+pub fn is_reserved_ssh_target(host: &str) -> bool {
     let host_lower = host.to_lowercase();
+    let host_trimmed = host_lower.trim_matches(|c| c == '[' || c == ']');
 
-    // Loopback
-    if host_lower == "localhost"
-        || host_lower == "127.0.0.1"
-        || host_lower == "::1"
-        || host_lower == "0.0.0.0"
-        || host_lower == "[::1]"
-        || host_lower.starts_with("127.")
+    // Try standard IP parse first
+    if let Ok(ip) = host_trimmed.parse::<std::net::IpAddr>() {
+        return is_ip_reserved(ip);
+    }
+
+    // Hostname checks
+    if host_trimmed == "localhost"
+        || host_trimmed.ends_with(".localhost")
+        || host_trimmed == "metadata.google.internal"
+        || host_trimmed == "metadata.google"
     {
         return true;
     }
 
-    // IPv4-mapped IPv6 loopback
-    if host_lower.starts_with("::ffff:127.") {
-        return true;
+    // Hex-encoded IP: 0x7f000001
+    if host_trimmed.starts_with("0x") {
+        if let Ok(num) = u32::from_str_radix(&host_trimmed[2..], 16) {
+            let ip = std::net::Ipv4Addr::from(num);
+            return is_ipv4_reserved(ip);
+        }
     }
 
-    // Cloud metadata endpoints
-    if host_lower == "169.254.169.254"
-        || host_lower == "metadata.google.internal"
-        || host_lower == "metadata.google"
-    {
-        return true;
+    // Decimal-encoded IP: 2130706433
+    if host_trimmed.chars().all(|c| c.is_ascii_digit()) && !host_trimmed.is_empty() && host_trimmed.len() <= 10 {
+        if let Ok(num) = host_trimmed.parse::<u32>() {
+            let ip = std::net::Ipv4Addr::from(num);
+            return is_ipv4_reserved(ip);
+        }
     }
 
-    // Link-local range (169.254.0.0/16)
-    if host_lower.starts_with("169.254.") {
-        return true;
-    }
-
-    // AWS IMDSv2 alternative
-    if host_lower == "fd00:ec2::254" {
-        return true;
+    // Octal-encoded IP: 0177.0.0.1 (leading zeros in octets)
+    if host_trimmed.contains('.') {
+        let parts: Vec<&str> = host_trimmed.split('.').collect();
+        if parts.len() == 4 {
+            let has_octal = parts.iter().any(|p| p.starts_with('0') && p.len() > 1 && p.chars().all(|c| c.is_ascii_digit()));
+            if has_octal {
+                let octets: Option<Vec<u8>> = parts.iter().map(|p| {
+                    if p.starts_with('0') && p.len() > 1 && p.chars().all(|c| c.is_ascii_digit()) {
+                        u8::from_str_radix(p, 8).ok()
+                    } else {
+                        p.parse::<u8>().ok()
+                    }
+                }).collect();
+                if let Some(bytes) = octets {
+                    let ip = std::net::Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]);
+                    return is_ipv4_reserved(ip);
+                }
+            }
+        }
     }
 
     false
+}
+
+fn is_ip_reserved(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => is_ipv4_reserved(v4),
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() {
+                return true;
+            }
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_ipv4_reserved(v4);
+            }
+            // AWS IMDSv2 alternative
+            if v6.to_string() == "fd00:ec2::254" {
+                return true;
+            }
+            false
+        }
+    }
+}
+
+fn is_ipv4_reserved(ip: std::net::Ipv4Addr) -> bool {
+    ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_link_local()
+        || ip == std::net::Ipv4Addr::new(169, 254, 169, 254)
 }
 
 /// Resolve a hostname and check if ANY of its IPs are reserved/internal.
