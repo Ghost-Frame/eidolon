@@ -71,9 +71,20 @@ pub async fn brain_query(
     let mut brain = state.brain.lock().await;
     let result = brain.query(&embedding, top_k, beta, spread_hops);
 
+    // Filter: user sees own memories + system memories only
+    let user_prefix = format!("user:{}/", user.0);
+    let filtered: Vec<_> = result.activated.into_iter()
+        .filter(|m| m.category.starts_with(&user_prefix) || m.category.starts_with("system/"))
+        .collect();
+
     Ok(Json(json!({
         "ok": true,
-        "result": result,
+        "result": {
+            "activated": filtered,
+            "contradictions": result.contradictions,
+            "total_patterns": result.total_patterns,
+            "query_time_ms": result.query_time_ms,
+        },
         "user": user.0,
     })))
 }

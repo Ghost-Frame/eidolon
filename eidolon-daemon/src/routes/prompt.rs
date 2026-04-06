@@ -22,7 +22,7 @@ pub async fn generate_prompt(
 ) -> Json<Value> {
     let agent = req.agent.as_deref().unwrap_or("claude-code");
     tracing::info!("prompt/generate: user={} task_len={} agent={}", user.0, req.task.len(), agent);
-    let prompt = generator::generate_prompt(&state, &req.task, agent).await;
+    let prompt = generator::generate_prompt(&state, &req.task, agent, &user.0).await;
     Json(json!({
         "ok": true,
         "prompt": prompt,

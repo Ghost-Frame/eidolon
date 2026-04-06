@@ -23,8 +23,16 @@ pub async fn run_agent(
         sessions.sync_session_to_db(&session_id);
     }
 
+    // Get session user for scoped brain queries
+    let session_user = {
+        let sessions = state.sessions.lock().await;
+        sessions.get_session(&session_id, None)
+            .map(|s| s.user.clone())
+            .unwrap_or_default()
+    };
+
     // Generate living prompt
-    let living_prompt = match generate_prompt(&state, &task, &agent_name).await {
+    let living_prompt = match generate_prompt(&state, &task, &agent_name, &session_user).await {
         prompt => prompt,
     };
 

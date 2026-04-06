@@ -21,6 +21,7 @@ pub async fn absorb_to_brain(
     content: &str,
     category: &str,
     importance: i32,
+    user: Option<&str>,
 ) {
     let embedding = match state.embed_text(content).await {
         Some(e) if !e.is_empty() => e,
@@ -30,13 +31,18 @@ pub async fn absorb_to_brain(
         }
     };
 
+    let tagged_category = match user {
+        Some(u) => format!("user:{}/{}", u, category),
+        None => format!("system/{}", category),
+    };
+
     // Generate a unique ID using UUID v4
     let id = (uuid::Uuid::new_v4().as_u128() as i64).abs();
 
     let memory = eidolon_lib::types::BrainMemory {
         id,
         content: content.to_string(),
-        category: category.to_string(),
+        category: tagged_category.clone(),
         source: "eidolon-daemon".to_string(),
         importance,
         created_at: chrono::Utc::now().to_rfc3339(),
@@ -51,11 +57,11 @@ pub async fn absorb_to_brain(
 
     let mut brain = state.brain.lock().await;
     brain.absorb_new(memory);
-    tracing::info!("absorber: absorbed memory id={} into brain ({})", id, category);
+    tracing::info!("absorber: absorbed memory id={} into brain ({})", id, tagged_category);
 }
 
 pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
-    let (task, output_buffer, status, corrections, agent, short_id) = {
+    let (task, output_buffer, status, corrections, agent, short_id, user) = {
         let sessions = state.sessions.lock().await;
         match sessions.get_session(&session_id, None) {
             Some(s) => (
@@ -65,6 +71,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
                 s.corrections,
                 s.agent.clone(),
                 s.short_id().to_string(),
+                s.user.clone(),
             ),
             None => {
                 tracing::warn!("absorber: session {} not found", session_id);
@@ -101,7 +108,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
     };
 
     // 1. Absorb session summary into brain
-    absorb_to_brain(&state, &summary, "task", importance).await;
+    absorb_to_brain(&state, &summary, "task", importance, Some(&user)).await;
 
     // 2. Also store to Engram for cross-agent visibility (only when Engram is the provider)
     if state.engram_enabled() {
@@ -145,7 +152,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
             scrub.scrub(&session_id, &raw)
         };
         // Absorb blocks with high importance - these are correction signals
-        absorb_to_brain(&state, &block_content, "issue", 8).await;
+        absorb_to_brain(&state, &block_content, "issue", 8, Some(&user)).await;
 
         // Also to Engram (if enabled)
         if state.engram_enabled() {
@@ -186,7 +193,7 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
             let scrub = state.scrub_registry.lock().await;
             scrub.scrub(&session_id, &raw)
         };
-        absorb_to_brain(&state, &discovery_content, "discovery", 5).await;
+        absorb_to_brain(&state, &discovery_content, "discovery", 5, Some(&user)).await;
 
         if state.engram_enabled() {
             let store_url = format!("{}/store", state.config.engram.url);

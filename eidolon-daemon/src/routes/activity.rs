@@ -132,7 +132,7 @@ pub async fn post_activity(
         _ => 4,
     };
     let brain_fut = crate::absorber::absorb_to_brain(
-        &state, &brain_content, brain_category, brain_importance,
+        &state, &brain_content, brain_category, brain_importance, Some(&user.0),
     );
 
     // Only store to Engram on completions and errors (not every progress tick)

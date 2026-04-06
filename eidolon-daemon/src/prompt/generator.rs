@@ -48,6 +48,7 @@ async fn query_brain(
     state: &Arc<AppState>,
     query: &str,
     top_k: usize,
+    user: &str,
 ) -> (Vec<MemorySummary>, Vec<ContradictionInfo>) {
     let embedding = match state.embed_text(query).await {
         Some(e) if !e.is_empty() => e,
@@ -60,15 +61,18 @@ async fn query_brain(
     let mut brain = state.brain.lock().await;
     let result = brain.query(&embedding, top_k, 8.0, 2);
 
-    let memories: Vec<MemorySummary> = result.activated.iter().map(|m| {
-        MemorySummary {
-            id: m.id,
-            content: scrub_credentials(&m.content),
-            category: m.category.clone(),
-            activation: m.activation,
-            created_at: m.created_at.clone(),
-        }
-    }).collect();
+    let user_prefix = format!("user:{}/", user);
+    let memories: Vec<MemorySummary> = result.activated.iter()
+        .filter(|m| m.category.starts_with(&user_prefix) || m.category.starts_with("system/"))
+        .map(|m| {
+            MemorySummary {
+                id: m.id,
+                content: scrub_credentials(&m.content),
+                category: m.category.clone(),
+                activation: m.activation,
+                created_at: m.created_at.clone(),
+            }
+        }).collect();
 
     let contradictions: Vec<ContradictionInfo> = result.contradictions.iter().filter_map(|c| {
         let winner = result.activated.iter().find(|m| m.id == c.winner_id)?;
@@ -87,16 +91,17 @@ pub async fn generate_prompt(
     state: &Arc<AppState>,
     task: &str,
     _agent_type: &str,
+    user: &str,
 ) -> String {
     // Query 1: Task-specific brain recall
-    let (task_memories, task_contradictions) = query_brain(state, task, 12).await;
+    let (task_memories, task_contradictions) = query_brain(state, task, 12, user).await;
 
     // Query 2: Infrastructure context
-    let (infra_memories, _) = query_brain(state, "server infrastructure deployment SSH configuration", 8).await;
+    let (infra_memories, _) = query_brain(state, "server infrastructure deployment SSH configuration", 8, user).await;
 
     // Query 3: Safety and past failures
     let failure_query = format!("failure problem error blocked mistake {}", task);
-    let (failure_memories, _) = query_brain(state, &failure_query, 6).await;
+    let (failure_memories, _) = query_brain(state, &failure_query, 6, user).await;
 
     let engram_url = &state.config.engram.url;
 
