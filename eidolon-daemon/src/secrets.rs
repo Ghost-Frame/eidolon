@@ -140,6 +140,24 @@ impl CreddClient {
     }
 }
 
+/// POSIX shell-escape a value. If it contains any shell metacharacters,
+/// wrap in single quotes (escaping embedded single quotes).
+/// Safe values (alphanumeric + limited punctuation) pass through unchanged.
+pub fn shell_escape(input: &str) -> String {
+    if input.is_empty() {
+        return "''".to_string();
+    }
+    let safe = input.bytes().all(|b| matches!(b,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' |
+        b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b',' | b'+'
+    ));
+    if safe {
+        return input.to_string();
+    }
+    let escaped = input.replace('\'', "'\\''");
+    format!("'{}'", escaped)
+}
+
 /// Resolve all secret placeholders in a JSON value.
 /// Returns SecretResolution with the modified input (if any secrets found),
 /// tier-3 tracked values, and any errors encountered.
@@ -310,7 +328,12 @@ async fn resolve_string(
                     match resolved {
                         Ok(val) => {
                             resolved_values.push(val.clone());
-                            result = result.replace(&full_match, &val);
+                            let substitution = if tool_name == "Bash" {
+                                shell_escape(&val)
+                            } else {
+                                val.clone()
+                            };
+                            result = result.replace(&full_match, &substitution);
                         }
                         Err(e) => {
                             errors.push(format!("{}:{}/{}: {}", full_match, svc, key, e));
@@ -352,7 +375,12 @@ async fn resolve_string(
                         Ok(val) => {
                             tier3_values.push(val.clone());
                             resolved_values.push(val.clone());
-                            result = result.replace(&full_match, &val);
+                            let substitution = if tool_name == "Bash" {
+                                shell_escape(&val)
+                            } else {
+                                val.clone()
+                            };
+                            result = result.replace(&full_match, &substitution);
                         }
                         Err(e) => {
                             errors.push(format!("{}:{}/{}.{}: {}", full_match, svc, key, field, e));
