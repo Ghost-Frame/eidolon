@@ -16,6 +16,7 @@ use crate::AppState;
 use crate::UserIdentity;
 use crate::audit::AuditRecord;
 use crate::routes::{activity, audit as audit_route, brain, gate, growth, prompt, sessions, tasks};
+use crate::proxy::handler::{proxy_messages, proxy_stats};
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({
@@ -207,7 +208,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             .allow_headers(Any)
     };
 
-    Router::new()
+    // Main routes with auth + rate limiting + audit
+    let main_routes = Router::new()
         .route("/health", get(health))
         .route("/activity", post(activity::post_activity))
         .route("/task", post(tasks::submit_task))
@@ -220,6 +222,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/brain/dream", post(brain::brain_dream))
         .route("/gate/check", post(gate::gate_check))
         .route("/gate/complete", post(gate::gate_complete))
+        .route("/gate/respond", post(gate::gate_respond))
         .route("/growth/reflect", post(growth::growth_reflect))
         .route("/growth/observations", get(growth::growth_observations))
         .route("/growth/materialize", get(growth::growth_materialize))
@@ -236,7 +239,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             auth_middleware,
-        ))
+        ));
+
+    // Proxy routes -- NO auth middleware (they forward Anthropic API keys)
+    let proxy_enabled = state.config.proxy.enabled && state.proxy_state.is_some();
+    let router = if proxy_enabled {
+        tracing::info!("proxy routes enabled at /v1/messages");
+        let proxy_routes = Router::new()
+            .route("/v1/messages", post(proxy_messages))
+            .route("/proxy/stats", get(proxy_stats));
+        main_routes.merge(proxy_routes)
+    } else {
+        main_routes
+    };
+
+    router
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

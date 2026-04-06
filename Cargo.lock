@@ -572,6 +572,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
+ "bytes",
  "chrono",
  "dashmap",
  "eidolon-lib",
