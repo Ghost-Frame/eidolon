@@ -73,7 +73,7 @@ impl ConversationManager {
             .map(|m| ChatMessage {
                 sender: match m.role {
                     Role::User => "You".to_string(),
-                    Role::Assistant => "Gojo".to_string(),
+                    Role::Assistant => "Eidolon".to_string(),
                     Role::System => "System".to_string(),
                 },
                 content: m.content.clone(),

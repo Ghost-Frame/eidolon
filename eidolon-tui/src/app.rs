@@ -148,7 +148,7 @@ impl App {
 
         let mut conversation = ConversationManager::new(&system_prompt, max_tokens, max_messages);
         // Add initial greeting
-        conversation.add_assistant_message("Yo. The strongest just came online. What do you need?");
+        conversation.add_assistant_message("I'm awake. What've you got for me?");
 
         let panel_split_percent = config.tui.panel_split;
 

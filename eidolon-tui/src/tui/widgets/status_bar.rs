@@ -71,8 +71,8 @@ impl Widget for StatusBar<'_> {
         }
         x += 2;
 
-        // "gojo mode"
-        let mode = "gojo mode";
+        // "eidolon mode"
+        let mode = "eidolon";
         for ch in mode.chars() {
             if x < area.right() {
                 buf[(x, area.y)].set_char(ch).set_style(Style::default().fg(self.theme.dim));
@@ -83,7 +83,7 @@ impl Widget for StatusBar<'_> {
 
         // Input target indicator
         let (target_str, target_color) = match self.input_target {
-            InputTarget::Tui => ("[TUI]", self.theme.gojo_text),
+            InputTarget::Tui => ("[TUI]", self.theme.eidolon_text),
             InputTarget::Claude => ("[Claude]", self.theme.accent),
         };
         for ch in target_str.chars() {

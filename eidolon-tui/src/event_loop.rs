@@ -7,7 +7,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::app::{App, AppMode, ServiceState};
 use crate::commands;
 use crate::config::Config;
-use crate::conversation::personality::gojo_system_prompt;
+use crate::conversation::personality::system_prompt;
 use crate::conversation::router;
 use crate::daemon::client::DaemonClient;
 use crate::dispatch;
@@ -38,7 +38,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     let mut tui = terminal::init()?;
-    let system_prompt = gojo_system_prompt();
+    let system_prompt = system_prompt();
     let (system_msg_tx, system_msg_rx) = mpsc::unbounded_channel::<String>();
     let mut app = App::new(config.clone(), system_prompt, system_msg_rx);
 
@@ -294,7 +294,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 && !app.pending_response.is_empty()
             {
                 display_messages.push(crate::tui::widgets::chat_area::ChatMessage {
-                    sender: "Gojo".to_string(),
+                    sender: "Eidolon".to_string(),
                     content: app.pending_response.clone(),
                     is_user: false,
                 });
@@ -640,6 +640,22 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                 let _ = engram.store(&content, "eidolon-tui", "conversation").await;
                             });
                         }
+                    }
+                }
+
+                // Growth reflection -- send exchange to daemon for personality evolution
+                if let Some(ref daemon) = daemon_client {
+                    let user_msg = app.pending_user_message.clone();
+                    let response = app.pending_response.clone();
+                    if !user_msg.is_empty() && !response.is_empty() {
+                        let daemon = daemon.clone();
+                        tokio::spawn(async move {
+                            let context = vec![
+                                format!("User said: {}", user_msg),
+                                format!("Eidolon responded: {}", response),
+                            ];
+                            let _ = daemon.growth_reflect(&context, None).await;
+                        });
                     }
                 }
 

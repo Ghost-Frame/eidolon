@@ -32,7 +32,7 @@ impl Widget for InputBar<'_> {
         block.render(area, buf);
 
         let (tag, tag_color) = match self.input_target {
-            InputTarget::Tui => ("[TAB: TUI] > ", self.theme.gojo_text),
+            InputTarget::Tui => ("[TAB: TUI] > ", self.theme.eidolon_text),
             InputTarget::Claude => ("[TAB: Claude] > ", self.theme.tool_call),
         };
         let prompt = tag;

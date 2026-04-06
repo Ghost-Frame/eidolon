@@ -247,6 +247,41 @@ impl DaemonClient {
             .map_err(|e| format!("Sessions response parse failed: {}", e))
     }
 
+    /// Send conversation context to the growth reflection system.
+    /// Returns an observation string if the LLM found something worth noting.
+    pub async fn growth_reflect(
+        &self,
+        context: &[String],
+        existing_growth: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let url = format!("{}/growth/reflect", self.base_url);
+        let mut body = json!({
+            "service": "eidolon-tui",
+            "context": context,
+        });
+        if let Some(existing) = existing_growth {
+            body["existing_growth"] = json!(existing);
+        }
+
+        let resp = self.http.post(&url)
+            .header("Authorization", self.auth_header())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Growth reflect failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Growth reflect: HTTP {}", resp.status()));
+        }
+
+        let result: Value = resp.json().await
+            .map_err(|e| format!("Growth reflect parse: {}", e))?;
+
+        Ok(result.get("observation")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()))
+    }
+
     /// Kill a running session.
     pub async fn kill_session(&self, session_id: &str) -> Result<(), String> {
         let url = format!("{}/task/{}/kill", self.base_url, session_id);

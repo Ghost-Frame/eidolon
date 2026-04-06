@@ -50,7 +50,7 @@ impl Widget for ChatArea<'_> {
             let color = if msg.is_user {
                 self.theme.user_text
             } else {
-                self.theme.gojo_text
+                self.theme.eidolon_text
             };
 
             lines.push(Line::from(vec![
