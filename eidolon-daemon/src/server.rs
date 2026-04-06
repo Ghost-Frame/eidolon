@@ -242,13 +242,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ));
 
     // Proxy routes -- NO auth middleware (they forward Anthropic API keys)
+    // Merge direction matters: proxy_routes.merge(main_routes) keeps proxy
+    // routes outside the auth/rate-limit/audit layers applied to main_routes.
     let proxy_enabled = state.config.proxy.enabled && state.proxy_state.is_some();
     let router = if proxy_enabled {
         tracing::info!("proxy routes enabled at /v1/messages");
         let proxy_routes = Router::new()
             .route("/v1/messages", post(proxy_messages))
-            .route("/proxy/stats", get(proxy_stats));
-        main_routes.merge(proxy_routes)
+            .route("/proxy/stats", get(proxy_stats))
+            .with_state(Arc::clone(&state));
+        proxy_routes.merge(main_routes)
     } else {
         main_routes
     };
