@@ -353,7 +353,7 @@ pub async fn gate_check(
     // Tools requiring human approval via TUI (only when session is known)
     const APPROVAL_TOOLS: &[&str] = &["Bash", "WebFetch", "WebSearch"];
     if session_id != "unknown" && APPROVAL_TOOLS.contains(&tool_name) {
-        let approval_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+        let approval_id = format!("{}:{}", session_id, &uuid::Uuid::new_v4().to_string()[..8]);
         let summary = if !command.is_empty() {
             let truncated: String = command.chars().take(120).collect();
             format!("{}: {}", tool_name, truncated)
@@ -434,8 +434,15 @@ pub struct GateRespondRequest {
 
 pub async fn gate_respond(
     State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<crate::UserIdentity>,
     Json(input): Json<GateRespondRequest>,
 ) -> Json<Value> {
+    // Validate approval_id format (session_id:random)
+    if !input.approval_id.contains(':') {
+        return Json(json!({"ok": false, "error": "invalid approval_id format"}));
+    }
+
+    let _ = user; // bound for auth middleware; not used further here
     let mut approvals = state.pending_approvals.lock().await;
     if let Some(tx) = approvals.remove(&input.approval_id) {
         let _ = tx.send(input.allow);
