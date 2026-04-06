@@ -30,7 +30,7 @@ pub fn build_gate_hook(daemon_host: &str, daemon_port: u16, fail_closed: bool) -
     script.push_str("INPUT=$(cat)\n");
     script.push_str("if [ -z \"$INPUT\" ]; then\n  exit 0\nfi\n");
     script.push_str(&format!(
-        "RESP=$(echo \"$INPUT\" | curl -sf --max-time 3 -X POST http://{}:{}/gate/check \\\n",
+        "RESP=$(echo \"$INPUT\" | curl -sf --max-time 120 -X POST http://{}:{}/gate/check \\\n",
         daemon_host, daemon_port
     ));
     script.push_str("  -H \"Content-Type: application/json\" \\\n");
@@ -78,7 +78,10 @@ pub fn build_settings_json(hook_path: &str, bypass_permissions: bool) -> serde_j
     } else {
         serde_json::json!({
             "defaultMode": "allowEdits",
-            "autoApprove": ["Read", "Write", "Glob", "Grep", "Edit", "LS", "TodoRead", "TodoWrite", "NotebookRead"]
+            "autoApprove": [
+                "Read", "Write", "Glob", "Grep", "Edit", "LS",
+                "TodoRead", "TodoWrite", "NotebookRead", "NotebookEdit"
+            ]
         })
     };
     serde_json::json!({
@@ -87,7 +90,7 @@ pub fn build_settings_json(hook_path: &str, bypass_permissions: bool) -> serde_j
             "PreToolUse": [
                 {
                     "matcher": "",
-                    "hooks": [{"type": "command", "command": hook_cmd, "timeout": 5}]
+                    "hooks": [{"type": "command", "command": hook_cmd, "timeout": 120}]
                 }
             ]
         }
@@ -230,8 +233,12 @@ pub async fn run_claude_code(
     let stdout_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
+            let scrubbed = {
+                let scrub = state_stdout.scrub_registry.lock().await;
+                scrub.scrub(&sid_stdout, &line)
+            };
             let mut sessions = state_stdout.sessions.lock().await;
-            sessions.append_output(&sid_stdout, line);
+            sessions.append_output(&sid_stdout, scrubbed);
         }
     });
 
@@ -241,9 +248,13 @@ pub async fn run_claude_code(
     let stderr_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            tracing::debug!("claude stderr [{}]: {}", sid_stderr, line);
+            let scrubbed = {
+                let scrub = state_stderr.scrub_registry.lock().await;
+                scrub.scrub(&sid_stderr, &line)
+            };
+            tracing::debug!("claude stderr [{}]: {}", sid_stderr, scrubbed);
             let mut sessions = state_stderr.sessions.lock().await;
-            sessions.append_output(&sid_stderr, format!("[stderr] {}", line));
+            sessions.append_output(&sid_stderr, format!("[stderr] {}", scrubbed));
         }
     });
 
