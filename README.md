@@ -1,6 +1,6 @@
 # Eidolon
 
-A neural brain for AI agents. Understands memories instead of searching them.
+Neural brain and transparent proxy for AI agents. Understands memories instead of searching them. Captures new ones without being asked.
 
 [![License](https://img.shields.io/badge/license-Elastic%202.0-orange)](LICENSE)
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange)](https://www.rust-lang.org/)
@@ -19,7 +19,7 @@ Cosine similarity finds what matches the query. It does not know what is true, w
 
 Memories become activation patterns in a neural space, not rows in a database. Associations form through connection weights that strengthen with use and decay with neglect.
 
-When two facts conflict, they compete. The pattern backed by more recent, more frequently reinforced memories wins. The stale pattern fades. It is not deleted. It becomes harder to reach, the way a half-remembered thing is harder to reach.
+When two facts conflict, they compete. The pattern backed by more recent, more frequently reinforced memories wins. The stale pattern fades. It becomes harder to reach, the way a half-remembered thing does.
 
 When an agent sends a query, the brain does pattern completion. The query activates a partial pattern; the network fills in the strongest connected associations and returns a synthesized answer grounded in specific memories.
 
@@ -28,18 +28,19 @@ When an agent sends a query, the brain does pattern completion. The query activa
 > Agent asserts: "Engram runs on Windows."
 > Brain responds: "No. Engram moved to the production server on March 20th. The previous instance was decommissioned. [sources: 3 memories documenting the migration]"
 
-The brain corrects the agent using maintained temporal understanding, not a search result.
+The brain corrects the agent using temporal understanding maintained across thousands of memory updates, not a ranked search result.
 
-### What this enables
+### Capabilities
 
 - **Recall, not retrieval.** Queries activate patterns and complete them. The answer comes from the network's state, not from ranked documents.
+- **Transparent proxy.** Sits between Claude Code and the Anthropic API. Captures memories from conversations and injects relevant context into prompts. Invisible to the agent. No hooks, no MCP, no agent cooperation required.
 - **Contradiction resolution.** Conflicting memories compete. The network converges on the stronger, more current pattern.
 - **Natural decay.** Unused associations fade. Patterns that never get reinforced become unreachable over time.
-- **Dreaming.** Offline consolidation replays patterns, strengthens important connections, and resolves interference during idle periods. Has a 20% chance of triggering a growth reflection afterward.
-- **Growth.** Post-dream reflection via Together.ai LLM. Observations accumulate in Engram and get injected into living prompts via `/growth/materialize`.
+- **Dreaming.** Offline consolidation replays patterns, strengthens important connections, and resolves interference during idle periods.
+- **Growth.** Post-dream reflection produces observations that accumulate in Engram and get injected into living prompts via `/growth/materialize`.
 - **Instincts.** New instances ship with pre-trained neural wiring for how to think. What to think about comes from operator data.
 - **Evolution.** Feedback reshapes connection weights. The brain adjusts what it emphasizes based on what turns out to be right or wrong.
-- **The Guardian.** A persistent daemon that spawns agents with living context from the brain, intercepts every action through a gate, blocks mistakes, and absorbs session learnings back.
+- **Action gate.** Every outbound command passes through a safety gate. Dangerous operations get blocked or enriched with warnings before execution.
 - **Activity fan-out.** Agents report activity to one endpoint. Eidolon distributes to task tracking, event bus, action logging, quality evaluation, agent registry, memory storage, and the neural brain.
 
 ---
@@ -47,48 +48,42 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 ## Architecture
 
 ```
-+---------------------------------------+
-|           Terminal UI (TUI)           |
-|         eidolon-tui (Windows)         |
-|                                       |
-|  Local LLM (llama-server / GPU)       |
-|  Parallel routing + chat              |
-|  DaemonClient (HTTP + WebSocket)      |
-+---------------------------------------+
-           |  HTTP / WS
-           v
+Claude Code (or any Anthropic API client)
+    |
+    | ANTHROPIC_BASE_URL pointed at Eidolon
+    v
 +----------------------------------------------------------+
-|                     Guardian Daemon                      |
+|                     Eidolon Daemon                       |
 |               eidolon-daemon (Rust / axum)               |
 |                                                          |
-|  HTTP :7700    Living Prompt     Action Gate             |
-|  /task         Generator         /gate/check             |
-|  /sessions     /prompt/generate  allow / block / enrich  |
-|  /activity     Engram context                            |
-|  /brain/*      + neural recall                           |
-|  /growth/*     reflection + observations + materialize   |
+|  Transparent Proxy (/v1/messages)                        |
+|    Recall: Engram query -> Hopfield filter -> inject     |
+|    Capture: classify turns -> extract -> store           |
 |                                                          |
-|  Agent Registry    Session Absorber    Agent Wrapper     |
-|  claude-code       learnings -> brain  spawn + intercept |
+|  Action Gate         Activity Fan-out     Growth         |
+|  /gate/check         /activity            /growth/*      |
+|  block / enrich      7-service fan-out    reflect +      |
+|                                           materialize    |
+|  Brain API           Prompt Generator     Sessions       |
+|  /brain/query        /prompt/generate     /task, /stream |
+|  /brain/dream        Engram + neural                     |
 +----------------------------------------------------------+
            |                          |
            v                          v
 +--------------------+    +---------------------+
-|   Neural Substrate |    |  Engram + Syntheos  |
+|   Neural Substrate |    |  Engram             |
 |   eidolon-lib      |    |                     |
 |   (Rust)           |    |  Memory storage     |
-|                    |    |  Fact decomposition |
-|  Hopfield store    |    |  Task tracking      |
-|  Activation graph  |    |  Event bus          |
-|  Interference      |    |  Action logging     |
-|  Decay             |    |  Agent registry     |
-|                    |    |  Quality evaluation |
-|                    |    +---------------------+
+|                    |    |  Hybrid search      |
+|  Hopfield store    |    |  FSRS-6 decay       |
+|  Activation graph  |    |  Knowledge graph    |
+|  Interference      |    |  Personality engine |
+|  Decay             |    +---------------------+
 |  Dreaming          |
-|  Instincts         |
-|  Evolution         |
-+--------------------+
-           |
+|  Instincts         |    +---------------------+
+|  Evolution         |    |  Ollama (local LLM) |
++--------------------+    |  Classification     |
+           |              +---------------------+
            v
 +--------------------+
 |  SQLite brain.db   |
@@ -97,85 +92,60 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 
 **Neural Substrate** (`eidolon-lib`): Hopfield-based associative store, weighted activation graph, interference resolution, natural decay, offline dreaming, instinct pre-training, feedback-driven evolution.
 
-**Brain Binary** (`eidolon`): Standalone executable for direct neural brain operations -- pattern completion, dreaming cycles, instinct generation, and brain diagnostics outside the daemon.
+**Brain Binary** (`eidolon`): Standalone executable for direct neural brain operations. Pattern completion, dreaming cycles, instinct generation, and brain diagnostics outside the daemon.
 
-**Guardian Daemon** (`eidolon-daemon`): Persistent service at `:7700`. Manages agent sessions, generates living prompts from brain state, runs the action gate on every outbound command, absorbs session learnings back into the brain. Unified `/activity` endpoint handles fan-out to all Syntheos services.
+**Guardian Daemon** (`eidolon-daemon`): Persistent service at `:7700`. Transparent API proxy for Claude Code, action gate, activity fan-out, prompt generation, growth reflection. The proxy intercepts Anthropic API traffic to capture memories and inject recall context without any agent-side configuration.
 
-**Terminal UI** (`eidolon-tui`): One frontend for the daemon. Interactive TUI with a local LLM sidecar (llama-server on GPU) for routing and casual chat. Runs the Eidolon personality (Trickster Judge) locally. Pluggable embedding providers (Engram, OpenAI, generic HTTP) selected via `[embedding]` config. Auto-stores conversation exchanges to Engram and fires growth reflections after each exchange. Collects training data as JSONL for fine-tuning. Agent spawning, gate checks, brain queries, and session management all go through the daemon. Not required -- any agent that hits the daemon's API gets the same intelligence layer.
+**Terminal UI** (`eidolon-tui`): Interactive TUI with a local LLM sidecar (llama-server on GPU). Agent spawning, gate checks, brain queries, and session management go through the daemon. Not required. The proxy handles integration for Claude Code sessions automatically.
 
 **CLI** (`eidolon-cli`): Submit tasks and query status from the command line.
 
 ---
 
-## Integrating with Agents
+## Transparent Proxy
 
-The daemon is the core. The TUI is one frontend. Any agent that talks to the daemon's HTTP API gets the same intelligence layer -- living context, gate checks, brain recall, session absorption. A cloud-hosted agent (Claude Code, Cursor, etc.) running through the daemon gets the same capabilities as the local TUI.
+The primary integration path. Point `ANTHROPIC_BASE_URL` at Eidolon and every Claude Code session flows through it.
 
-### Claude Code Hooks
-
-Full integration uses four hook points. Place these in `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [{
-          "type": "command",
-          "command": "bash ~/.claude/hooks/session-start-engram.sh",
-          "timeout": 30,
-          "statusMessage": "Loading context from Eidolon brain..."
-        }]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [{
-          "type": "command",
-          "command": "bash ~/.claude/hooks/session-end.sh",
-          "timeout": 15
-        }]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [{
-          "type": "command",
-          "command": "bash /path/to/eidolon/scripts/eidolon-gate.sh",
-          "timeout": 10
-        }]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [{
-          "type": "command",
-          "command": "bash ~/.claude/hooks/eidolon-activity.sh",
-          "timeout": 10,
-          "async": true
-        }]
-      }
-    ]
-  }
-}
+```bash
+export ANTHROPIC_BASE_URL=http://your-eidolon-host:7700
 ```
 
-**What each hook does:**
+Two pipelines run on every request:
 
-| Hook | Lifecycle | Purpose |
-|------|-----------|---------|
-| SessionStart | Agent session begins | Calls `/prompt/generate` to inject brain-aware context. Registers with Soma via `/activity`. Falls back to direct Engram search if daemon is unreachable. |
-| Stop | Agent session ends | Calls `/gate/complete` to enforce Engram store requirement. Reports `agent.offline` via `/activity` for fan-out. |
-| PreToolUse (Bash) | Before every shell command | Sends command to `/gate/check`. Returns `allow`, `block`, or `enrich` (allow with added context). |
-| PostToolUse (Bash) | After every shell command | Reports significant actions (git push, ssh, deploys, service management) to `/activity`. Async, never blocks. |
+**Capture** (async, post-response): After streaming the response back to Claude Code, Eidolon diffs the conversation for new turns. Each turn gets classified through rule-based pattern matching and a local LLM (Ollama). Turns worth remembering get compressed into concise memories and stored to Engram. Most turns produce nothing. A typical 50-turn session yields 3-8 stored memories.
 
-All hooks fail open. If the daemon is unreachable, commands proceed normally. A dead gate is better than a dead agent.
+**Recall** (pre-request, <200ms): Before forwarding to Anthropic, Eidolon queries Engram for context relevant to the current message. Candidates pass through the Hopfield network for associative filtering. Survivors get synthesized into a short `<engram-context>` block and injected into the system prompt. A differential check prevents re-injecting the same context on consecutive turns. Most turns inject nothing.
 
-### The Gate
+The proxy forwards Anthropic API keys from the client. It does not use Eidolon's own auth for proxy routes.
 
-The gate script (`scripts/eidolon-gate.sh`) reads hook input from stdin, posts it to `/gate/check`, and interprets the response. Blocked actions exit with code 2 and print the reason to stderr. Enriched actions print added context to stderr and allow execution.
+```toml
+[proxy]
+enabled = true
+anthropic_url = "https://api.anthropic.com"
+
+[proxy.capture]
+enabled = true
+classification_model = "qwen2.5:3b"
+ollama_url = "http://localhost:11434"
+novelty_threshold = 0.9
+max_memories_per_session = 20
+
+[proxy.recall]
+enabled = true
+max_tokens = 800
+staleness_threshold = 0.8
+engram_mode = "fast"
+```
+
+Both pipelines can be independently disabled for debugging.
+
+---
+
+## Action Gate
+
+The gate script (`scripts/eidolon-gate.sh`) intercepts shell commands via Claude Code's `PreToolUse` hook. Each command goes to `/gate/check`, which returns `allow`, `block`, or `enrich`. Blocked commands exit with code 2 and print the reason. Enriched commands add context and allow execution.
+
+All hooks fail open. If the daemon is unreachable, commands proceed normally.
 
 ---
 
@@ -203,144 +173,25 @@ All fan-out is best-effort. Individual service failures are logged but do not fa
 
 ## Growth System
 
-The growth system gives Eidolon and its managed services the ability to reflect on their own behavior, accumulate observations over time, and inject that accumulated knowledge back into living prompts.
+After each dream cycle, there is a configurable chance that the daemon reflects on the results. An LLM reads the dream context alongside prior observations and produces one new observation (or nothing if nothing is notable). Observations accumulate in Engram and get injected into living prompts via `/growth/materialize`.
 
-### How It Works
-
-After each dream cycle, there is a 20% chance (`reflection_chance`) that the daemon calls `/growth/reflect` on itself. The reflection request contains a summary of the dream cycle results. An LLM (Together.ai) reads that context alongside previously accumulated observations, produces one new observation (or nothing if nothing is notable), and the observation is stored in Engram under `category=growth`. Over time, observations accumulate and get injected into living prompts via `/growth/materialize`.
-
-Other services in the Syntheos ecosystem can use the same endpoints to reflect on their own activity.
+Other services in the ecosystem can use the same endpoints to reflect on their own activity.
 
 ### Endpoints
 
-**POST /growth/reflect**
+**POST /growth/reflect**: Send recent activity context, receive an LLM-generated observation.
 
-Send recent activity context to get an LLM-generated observation. Returns `null` if the LLM found nothing worth recording.
+**GET /growth/observations**: Fetch raw growth observations from Engram. Filter by service, limit, or timestamp.
 
-```bash
-curl -s http://localhost:7700/growth/reflect \
-  -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{
-    "service": "eidolon",
-    "context": [
-      "Dream cycle completed in 340ms",
-      "Replayed 12 recent patterns, merged 3 redundant",
-      "Resolved 1 contradiction"
-    ],
-    "existing_growth": "optional -- prior growth log text to avoid repeating known observations",
-    "prompt_override": null
-  }'
-```
-
-Response:
-
-```json
-{ "observation": "Pattern merges are clustering around session-boundary memories, suggesting replay timing may need adjustment." }
-```
-
-Or if nothing notable:
-
-```json
-{ "observation": null }
-```
-
-Fields:
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `service` | yes | Service name (`eidolon`, `claude-code`, `engram`, `chiasm`, `thymus`, or any string) |
-| `context` | yes | Array of strings describing recent activity |
-| `existing_growth` | no | Prior growth log text -- passed to the LLM to avoid repeating known observations |
-| `prompt_override` | no | Custom system prompt -- overrides the built-in domain prompt for this service |
-
-Successful observations are automatically fanned out to `/activity` as `growth.observed`.
-
-Returns `503` if the growth system is disabled in config.
-
----
-
-**GET /growth/observations**
-
-Fetch raw growth observations from Engram.
-
-```bash
-curl -s "http://localhost:7700/growth/observations?service=eidolon&limit=20" \
-  -H "Authorization: Bearer $KEY"
-```
-
-Query params:
-
-| Param | Default | Description |
-|-------|---------|-------------|
-| `service` | (all) | Filter by service name |
-| `limit` | 20 | Max results (cap 100) |
-| `since` | (all time) | ISO 8601 timestamp lower bound |
-
-Response:
-
-```json
-{
-  "observations": [
-    { "content": "...", "source": "eidolon-growth", "created_at": "2026-04-05T12:00:00Z" }
-  ]
-}
-```
-
----
-
-**GET /growth/materialize**
-
-Returns accumulated observations as formatted plain text, suitable for injection into a living prompt. Truncates at `max_bytes` to fit prompt budgets.
-
-```bash
-curl -s "http://localhost:7700/growth/materialize?service=eidolon&limit=30&max_bytes=8000" \
-  -H "Authorization: Bearer $KEY"
-```
-
-Query params:
-
-| Param | Default | Description |
-|-------|---------|-------------|
-| `service` | (all) | Filter by service name |
-| `limit` | 30 | Max observations to include (cap 100) |
-| `max_bytes` | 16000 | Hard byte cap on output |
-
-Response is plain text (`text/plain`):
-
-```
-# Growth Log
-
-Personality evolution and learnings accumulated over time.
-
-- [2026-04-05] Pattern merges are clustering around session-boundary memories.
-- [2026-04-04] Contradiction resolution improved after pruning stale edges from March.
-```
-
-Returns `# Growth Log\n\nNo observations yet.\n` if the store is empty.
-
----
+**GET /growth/materialize**: Returns accumulated observations as formatted plain text, suitable for injection into a living prompt. Truncates at a configurable byte cap.
 
 ### Configuration
-
-Add a `[growth]` section to `config.toml`:
 
 ```toml
 [growth]
 enabled = true
-reflection_chance = 0.20        # probability of reflecting after each dream cycle
-llm_url = "https://api.together.xyz/v1/chat/completions"
-llm_model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+reflection_chance = 0.20
 ```
-
-All fields are optional -- the values above are the defaults.
-
-The API key is **not** stored in config. It is loaded at startup from credd:
-
-```
-together/api-key
-```
-
-The daemon calls `credd get together api-key` during initialization and stores the result in memory. If credd is unavailable at startup, `/growth/reflect` returns `500` with `"growth LLM API key not configured"`.
 
 ---
 
@@ -350,17 +201,12 @@ The daemon calls `credd get together api-key` during initialization and stores t
 
 - Rust 1.75+
 - [Engram](https://github.com/Ghost-Frame/engram) running and accessible
+- Ollama with a small classification model (for proxy capture)
 
 ### Build
 
 ```bash
-cargo build --release --workspace
-```
-
-For static binaries (cross-distro deployment):
-
-```bash
-cargo build --release --target x86_64-unknown-linux-musl -p eidolon-daemon
+cargo build --release -p eidolon-daemon
 ```
 
 ### Configure
@@ -383,18 +229,16 @@ data_dir = "/path/to/eidolon/data"
 [engram]
 url = "http://localhost:4200"
 
-[agents.claude-code]
-command = "claude"
-args = ["-p", "--output-format", "stream-json"]
-models = ["opus", "sonnet", "haiku"]
-default_model = "sonnet"
-
-[growth]
+[proxy]
 enabled = true
-reflection_chance = 0.20
-llm_url = "https://api.together.xyz/v1/chat/completions"
-llm_model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-# API key loaded from credd at startup: together/api-key
+anthropic_url = "https://api.anthropic.com"
+
+[proxy.capture]
+classification_model = "qwen2.5:3b"
+ollama_url = "http://localhost:11434"
+
+[proxy.recall]
+max_tokens = 800
 ```
 
 ### Development Setup
@@ -409,11 +253,13 @@ git config core.hooksPath .githooks
 ```bash
 export EIDOLON_API_KEY=your-key
 
-# Start the daemon
 ./target/release/eidolon-daemon
+```
 
-# Submit a task
-./target/release/eidolon-cli "your task here"
+On client machines:
+
+```bash
+export ANTHROPIC_BASE_URL=http://your-eidolon-host:7700
 ```
 
 ---
@@ -424,19 +270,20 @@ export EIDOLON_API_KEY=your-key
 eidolon/
   eidolon-lib/          # Neural substrate (Hopfield, graph, decay, dreaming, evolution)
   eidolon/              # Main binary (neural brain executable)
-  eidolon-daemon/       # Guardian daemon (HTTP API, gate, agent orchestration)
+  eidolon-daemon/       # Guardian daemon (HTTP API, proxy, gate, agent orchestration)
     src/
       agents/           # Agent registry and adapters (claude-code)
+      embedding/        # Pluggable embedding providers (Engram, OpenAI, HTTP)
       prompt/           # Living prompt generator and templates
+      proxy/            # Transparent Anthropic API proxy (capture, recall, classify)
       routes/           # HTTP routes (activity, gate, brain, sessions, tasks, audit, growth)
       absorber.rs       # Session absorption back into brain
       session.rs        # Session lifecycle management
-    tests/              # Security pentest suite (72 tests)
-  eidolon-tui/          # Terminal UI with local LLM + daemon integration
+    tests/              # Security pentest suite (113 tests)
+  eidolon-tui/          # Terminal UI with local LLM and daemon integration
   eidolon-cli/          # CLI client
   config/               # Example configuration
   scripts/              # Gate hook script, benchmarks
-  docs/                 # Design specs
   data/                 # Instinct pre-training data
 ```
 
