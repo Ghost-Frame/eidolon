@@ -169,7 +169,7 @@ pub struct ServerEntry {
 
 fn default_ssh_port() -> u16 { 22 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SafetyConfig {
     #[serde(default)]
     pub rules: Vec<String>,
@@ -183,8 +183,20 @@ pub struct SafetyConfig {
     pub cors_origins: Vec<String>,
 }
 
+impl Default for SafetyConfig {
+    fn default() -> Self {
+        SafetyConfig {
+            rules: Vec::new(),
+            protected_services: Vec::new(),
+            bypass_permissions: false,
+            gate_fail_mode: default_gate_fail_mode(),
+            cors_origins: Vec::new(),
+        }
+    }
+}
+
 fn default_gate_fail_mode() -> String {
-    "open".to_string()
+    "closed".to_string()
 }
 
 // --- Multi-user auth ---
