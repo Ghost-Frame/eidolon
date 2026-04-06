@@ -79,38 +79,49 @@ impl Widget for ClaudePanel<'_> {
                     .render(inner, buf);
             }
             _ => {
-                let max_lines = inner.height as usize;
-                let total = self.session.messages.len();
-                let start = if self.session.auto_scroll {
-                    total.saturating_sub(max_lines)
-                } else {
-                    // scroll_offset counts from bottom: 0 = bottom
-                    let bottom_start = total.saturating_sub(max_lines);
-                    bottom_start.saturating_sub(self.session.scroll_offset)
-                };
-                let end = (start + max_lines).min(total);
+                let viewport_height = inner.height as usize;
+                // Reserve 1 column for scrollbar when needed
+                let content_width = if inner.width > 1 { inner.width - 1 } else { inner.width };
+                let cw = content_width.max(1) as usize;
 
-                let visible: Vec<Line> = self.session.messages[start..end]
-                    .iter()
+                // Build all lines with styling
+                let all_lines: Vec<Line> = self.session.messages.iter()
                     .map(|l| {
                         let color = line_color(l, self.theme);
                         Line::from(Span::styled(l.as_str(), Style::default().fg(color)))
                     })
                     .collect();
 
-                let show_scrollbar = total > max_lines;
+                // Estimate total wrapped row count for scroll math.
+                // Slightly overestimate to account for word-wrap padding --
+                // ratatui breaks on word boundaries, not character positions,
+                // so actual rows can exceed simple ceil(len/width).
+                let total_rows: usize = self.session.messages.iter()
+                    .map(|l| {
+                        let byte_len = l.len();
+                        if byte_len <= cw { 1 } else { byte_len / cw + 1 }
+                    })
+                    .sum();
+
+                let show_scrollbar = total_rows > viewport_height;
+
+                // Calculate scroll position (rows from top)
+                let scroll_pos = if self.session.auto_scroll {
+                    total_rows.saturating_sub(viewport_height)
+                } else {
+                    let bottom = total_rows.saturating_sub(viewport_height);
+                    bottom.saturating_sub(self.session.scroll_offset)
+                };
 
                 let para_area = if show_scrollbar && inner.width > 1 {
-                    Rect {
-                        width: inner.width - 1,
-                        ..inner
-                    }
+                    Rect { width: inner.width - 1, ..inner }
                 } else {
                     inner
                 };
 
-                Paragraph::new(visible)
+                Paragraph::new(all_lines)
                     .wrap(Wrap { trim: false })
+                    .scroll((scroll_pos as u16, 0))
                     .render(para_area, buf);
 
                 if show_scrollbar {
@@ -120,9 +131,9 @@ impl Widget for ClaudePanel<'_> {
                         .thumb_style(Style::default().fg(self.theme.claude_border))
                         .track_style(Style::default().fg(self.theme.dim));
 
-                    let mut scrollbar_state = ScrollbarState::new(total)
-                        .position(start)
-                        .viewport_content_length(max_lines);
+                    let mut scrollbar_state = ScrollbarState::new(total_rows)
+                        .position(scroll_pos)
+                        .viewport_content_length(viewport_height);
 
                     let scrollbar_area = Rect {
                         x: inner.x + inner.width - 1,
@@ -144,6 +155,10 @@ fn line_color(line: &str, theme: &Theme) -> Color {
     } else if line.contains("[error]") {
         Color::Rgb(239, 68, 68)
     } else if line.contains("[warning]") {
+        Color::Rgb(250, 204, 21)
+    } else if line.contains("PERMISSION REQUIRED") {
+        Color::Rgb(250, 204, 21)
+    } else if line.starts_with("  Type 'y'") {
         Color::Rgb(250, 204, 21)
     } else if line.starts_with('>') {
         theme.accent

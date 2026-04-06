@@ -124,6 +124,7 @@ pub struct App {
     // Three-way call fields
     pub input_target: InputTarget,
     pub claude_session: ClaudeSession,
+    pub pending_approval_id: Option<String>,
     pub panel_split_percent: u16,
     pub left_panel_rect: Rect,
     pub right_panel_rect: Rect,
@@ -184,6 +185,7 @@ impl App {
             daemon_reconnect_rx: None,
             input_target: InputTarget::Tui,
             claude_session: ClaudeSession::new(),
+            pending_approval_id: None,
             panel_split_percent,
             left_panel_rect: Rect::default(),
             right_panel_rect: Rect::default(),

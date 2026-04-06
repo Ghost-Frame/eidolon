@@ -295,6 +295,24 @@ impl DaemonClient {
             .map(|s| s.to_string()))
     }
 
+    /// Respond to a pending gate approval request.
+    pub async fn gate_respond(&self, approval_id: &str, allow: bool) -> Result<(), String> {
+        let url = format!("{}/gate/respond", self.base_url);
+        let resp = self.http.post(&url)
+            .header("Authorization", self.auth_header())
+            .json(&json!({
+                "approval_id": approval_id,
+                "allow": allow,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Gate respond failed: {}", e))?;
+        if !resp.status().is_success() {
+            return Err(format!("Gate respond failed: HTTP {}", resp.status()));
+        }
+        Ok(())
+    }
+
     /// Kill a running session.
     pub async fn kill_session(&self, session_id: &str) -> Result<(), String> {
         let url = format!("{}/task/{}/kill", self.base_url, session_id);

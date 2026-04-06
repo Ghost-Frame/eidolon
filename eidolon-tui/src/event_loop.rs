@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout};
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -680,7 +681,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 match rx.try_recv() {
                     Ok(line) => {
-                        // Parse lifecycle messages
+                        // Check lifecycle state from raw line before parsing display
                         if line.contains("[Session ended:") {
                             // Extract exit code from "[Session ended: <status> (exit code <n>)]"
                             let exit_code = line
@@ -695,12 +696,24 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                 .unwrap_or(0);
                             session_exit_code = exit_code;
                             session_ended = true;
-                            app.claude_session.messages.push(line);
                         } else if line.contains("[error]") || line.contains("[WebSocket error:") {
                             session_failed = Some(line.clone());
-                            app.claude_session.messages.push(line);
-                        } else {
-                            app.claude_session.messages.push(line);
+                        }
+                        // Detect permission requests from daemon gate
+                        if line.starts_with("[permission:") && !line.starts_with("[permission_denied:") {
+                            // Parse [permission:ID:TOOL] summary
+                            if let Some(end_bracket) = line.find(']') {
+                                let inner = &line[12..end_bracket]; // after "[permission:"
+                                let parts: Vec<&str> = inner.splitn(2, ':').collect();
+                                if parts.len() == 2 {
+                                    app.pending_approval_id = Some(parts[0].to_string());
+                                }
+                            }
+                        }
+                        // Parse for human-readable display (non-JSON lines pass through unchanged)
+                        let display_lines = parse_claude_output(&line);
+                        for dl in display_lines {
+                            app.claude_session.messages.push(dl);
                         }
                     }
                     Err(mpsc::error::TryRecvError::Empty) => break,
@@ -849,23 +862,69 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                         let msg = app.input.clone();
                                         app.input.clear();
                                         app.cursor_pos = 0;
-                                        app.claude_session.messages.push(format!("> You: {}", msg));
-                                        if let ClaudeSessionState::Active { ref session_id, .. } = app.claude_session.state {
-                                            if let Some(ref daemon) = daemon_client {
-                                                let daemon = Arc::clone(daemon);
-                                                let sid = session_id.clone();
-                                                let input = msg;
-                                                let sys_tx = system_msg_tx.clone();
-                                                tokio::spawn(async move {
-                                                    if let Err(e) = daemon.send_input(&sid, &input).await {
-                                                        let _ = sys_tx.send(format!("Failed to send to Claude: {}", e));
-                                                    }
-                                                });
+
+                                        // Check for pending permission approval
+                                        if let Some(ref approval_id) = app.pending_approval_id.clone() {
+                                            let lower = msg.trim().to_lowercase();
+                                            let allow = lower == "y" || lower == "yes" || lower == "approve";
+                                            let deny = lower == "n" || lower == "no" || lower == "deny";
+
+                                            if allow || deny {
+                                                let aid = approval_id.clone();
+                                                app.pending_approval_id = None;
+
+                                                if let Some(ref daemon) = daemon_client {
+                                                    let daemon = Arc::clone(daemon);
+                                                    let decision = allow;
+                                                    tokio::spawn(async move {
+                                                        let _ = daemon.gate_respond(&aid, decision).await;
+                                                    });
+                                                }
+
+                                                let decision_text = if allow { "Approved" } else { "Denied" };
+                                                app.claude_session.messages.push(format!("> {}", decision_text));
+                                                // Input was a permission response -- skip normal send
                                             } else {
-                                                app.claude_session.messages.push("[No daemon connected]".to_string());
+                                                // Not a valid approval response -- fall through to normal send
+                                                app.claude_session.messages.push(format!("> You: {}", msg));
+                                                if let ClaudeSessionState::Active { ref session_id, .. } = app.claude_session.state {
+                                                    if let Some(ref daemon) = daemon_client {
+                                                        let daemon = Arc::clone(daemon);
+                                                        let sid = session_id.clone();
+                                                        let input = msg;
+                                                        let sys_tx = system_msg_tx.clone();
+                                                        tokio::spawn(async move {
+                                                            if let Err(e) = daemon.send_input(&sid, &input).await {
+                                                                let _ = sys_tx.send(format!("Failed to send to Claude: {}", e));
+                                                            }
+                                                        });
+                                                    } else {
+                                                        app.claude_session.messages.push("[No daemon connected]".to_string());
+                                                    }
+                                                } else {
+                                                    app.claude_session.messages.push("[No active session]".to_string());
+                                                }
                                             }
                                         } else {
-                                            app.claude_session.messages.push("[No active session]".to_string());
+                                            // No pending approval -- normal message flow
+                                            app.claude_session.messages.push(format!("> You: {}", msg));
+                                            if let ClaudeSessionState::Active { ref session_id, .. } = app.claude_session.state {
+                                                if let Some(ref daemon) = daemon_client {
+                                                    let daemon = Arc::clone(daemon);
+                                                    let sid = session_id.clone();
+                                                    let input = msg;
+                                                    let sys_tx = system_msg_tx.clone();
+                                                    tokio::spawn(async move {
+                                                        if let Err(e) = daemon.send_input(&sid, &input).await {
+                                                            let _ = sys_tx.send(format!("Failed to send to Claude: {}", e));
+                                                        }
+                                                    });
+                                                } else {
+                                                    app.claude_session.messages.push("[No daemon connected]".to_string());
+                                                }
+                                            } else {
+                                                app.claude_session.messages.push("[No active session]".to_string());
+                                            }
                                         }
                                     }
                                 }
@@ -939,27 +998,27 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         MouseEventKind::ScrollUp => {
-                            // Scroll up = move viewport toward older content = decrease offset
                             if mouse.column < app.divider_col {
                                 app.tui_scroll_offset =
                                     app.tui_scroll_offset.saturating_sub(3);
                             } else {
+                                // Claude panel: offset counts from bottom; increase = toward older
                                 app.claude_session.scroll_offset =
-                                    app.claude_session.scroll_offset.saturating_sub(3);
+                                    app.claude_session.scroll_offset.saturating_add(3);
                                 app.claude_session.auto_scroll = false;
                             }
                         }
                         MouseEventKind::ScrollDown => {
-                            // Scroll down = move viewport toward newer content = increase offset
                             if mouse.column < app.divider_col {
                                 app.tui_scroll_offset =
                                     app.tui_scroll_offset.saturating_add(3);
                             } else {
+                                // Claude panel: offset counts from bottom; decrease = toward newer
+                                app.claude_session.scroll_offset =
+                                    app.claude_session.scroll_offset.saturating_sub(3);
                                 if app.claude_session.scroll_offset == 0 {
                                     app.claude_session.auto_scroll = true;
                                 }
-                                app.claude_session.scroll_offset =
-                                    app.claude_session.scroll_offset.saturating_add(3);
                             }
                         }
                         _ => {}
@@ -1075,4 +1134,143 @@ fn handle_confirmation(
         app.pending_pipeline_result = None;
         app.pending_daemon_prompt = None;
     }
+}
+
+/// Parse a single line of Claude Code JSONL output into human-readable display lines.
+///
+/// - system/init  -> single summary line
+/// - assistant    -> text blocks pass through; tool_use becomes "> Tool: name ..."; thinking skipped
+/// - result       -> prefixed with "> Result: "
+/// - unknown JSON -> original line
+/// - non-JSON     -> original line (lifecycle messages pass through unchanged)
+fn parse_claude_output(line: &str) -> Vec<String> {
+    if line.starts_with("[permission:") && !line.starts_with("[permission_denied:") {
+        if let Some(end_bracket) = line.find(']') {
+            let summary = line[end_bracket + 1..].trim();
+            return vec![
+                String::new(),
+                ">>> PERMISSION REQUIRED <<<".to_string(),
+                format!("  {}", summary),
+                "  Type 'y' to approve or 'n' to deny".to_string(),
+                String::new(),
+            ];
+        }
+    }
+    if line.starts_with("[permission_denied:") {
+        return vec!["> Permission denied.".to_string()];
+    }
+    let v: Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return vec![line.to_string()],
+    };
+
+    let msg_type = match v.get("type").and_then(|t| t.as_str()) {
+        Some(t) => t,
+        None => return vec![line.to_string()],
+    };
+
+    match msg_type {
+        "system" => {
+            if v.get("subtype").and_then(|s| s.as_str()) == Some("init") {
+                let model = v
+                    .get("model")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown");
+                vec![format!("> Claude session initialized ({})", model)]
+            } else {
+                // Other system messages (config, etc.) -- skip protocol noise
+                vec![]
+            }
+        }
+
+        "assistant" => {
+            let content = match v
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+            {
+                Some(arr) => arr,
+                None => return vec![],
+            };
+
+            let mut out: Vec<String> = Vec::new();
+            for block in content {
+                let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                match block_type {
+                    "text" => {
+                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                            for tline in text.lines() {
+                                out.push(tline.to_string());
+                            }
+                        }
+                    }
+                    "tool_use" => {
+                        let name = block
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("unknown");
+                        let summary = tool_input_summary(block.get("input"));
+                        out.push(format!("> Tool: {} {}", name, summary));
+                    }
+                    "thinking" => {
+                        // skip internal reasoning
+                    }
+                    _ => {}
+                }
+            }
+            out
+        }
+
+        "result" => {
+            let result_text = v
+                .get("result")
+                .and_then(|r| r.as_str())
+                .unwrap_or(line);
+            let mut out = vec!["> Result:".to_string()];
+            for l in result_text.lines() {
+                out.push(l.to_string());
+            }
+            out
+        }
+
+        // All other protocol types (rate_limit_event, user/tool_result, etc.)
+        // are internal noise -- drop silently
+        _ => vec![],
+    }
+}
+
+/// Build a short summary string from a tool_use `input` object, max 80 chars.
+fn tool_input_summary(input: Option<&Value>) -> String {
+    let obj = match input.and_then(|v| v.as_object()) {
+        Some(o) => o,
+        None => return String::new(),
+    };
+
+    // Prefer descriptive keys in order
+    for key in &["file_path", "command", "pattern", "path", "query"] {
+        if let Some(val) = obj.get(*key).and_then(|v| v.as_str()) {
+            let summary = format!("{}={}", key, val);
+            return if summary.len() > 80 {
+                format!("{}...", &summary[..77])
+            } else {
+                summary
+            };
+        }
+    }
+
+    // Fallback: first key=value pair
+    if let Some((k, v)) = obj.iter().next() {
+        let val_str = match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let summary = format!("{}={}", k, val_str);
+        return if summary.len() > 80 {
+            format!("{}...", &summary[..77])
+        } else {
+            summary
+        };
+    }
+
+    String::new()
 }
