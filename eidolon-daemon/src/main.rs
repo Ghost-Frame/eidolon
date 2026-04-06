@@ -7,6 +7,70 @@ use eidolon_daemon::scrubbing::ScrubRegistry;
 use eidolon_daemon::session::SessionManager;
 use eidolon_lib::brain::Brain;
 use eidolon_lib::growth;
+use eidolon_lib::instincts;
+
+/// Enrich ghost instinct embeddings with real BGE-large vectors from Engram.
+/// One-time migration: after first successful run, instincts.bin is version 2.
+async fn enrich_instincts_if_needed(
+    http_client: &reqwest::Client,
+    config: &Config,
+) {
+    let instincts_path = format!("{}/instincts.bin", config.brain.data_dir);
+    let mut corpus = match instincts::load_instincts(&instincts_path) {
+        Some(c) => c,
+        None => {
+            tracing::debug!("no instincts.bin found at {} -- skipping enrichment", instincts_path);
+            return;
+        }
+    };
+
+    if corpus.version >= 2 {
+        tracing::debug!("instincts already enriched (version {})", corpus.version);
+        return;
+    }
+
+    tracing::info!(
+        "enriching {} ghost instincts with real embeddings from Engram",
+        corpus.memories.len()
+    );
+
+    let engram_url = &config.engram.url;
+    let engram_key = config.engram.api_key.as_deref();
+    let mut enriched = 0usize;
+    let mut failed = 0usize;
+
+    for memory in &mut corpus.memories {
+        match embed_text(http_client, engram_url, engram_key, &memory.content).await {
+            Some(embedding) => {
+                memory.embedding = embedding;
+                enriched += 1;
+            }
+            None => {
+                failed += 1;
+            }
+        }
+    }
+
+    if enriched > 0 {
+        corpus.version = 2;
+        match instincts::save_instincts(&corpus, &instincts_path) {
+            Ok(()) => {
+                tracing::info!(
+                    "instincts enriched: {} succeeded, {} failed (kept sine-wave fallback)",
+                    enriched, failed
+                );
+            }
+            Err(e) => {
+                tracing::warn!("failed to save enriched instincts: {}", e);
+            }
+        }
+    } else {
+        tracing::warn!(
+            "Engram unreachable -- all {} enrichment attempts failed, keeping sine-wave embeddings",
+            failed
+        );
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -60,6 +124,9 @@ async fn main() {
     tracing::info!("brain db: {}", config.brain.db_path);
     tracing::info!("engram url: {}", config.engram.url);
     tracing::info!("auth: {} API key(s) configured", config.auth.api_keys.len());
+
+    // Enrich ghost instinct embeddings with real vectors (one-time migration)
+    enrich_instincts_if_needed(&http_client, &config).await;
 
     // Init brain
     let mut brain = Brain::new();

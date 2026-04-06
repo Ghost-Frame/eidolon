@@ -83,23 +83,8 @@ impl RoutingDecision {
 
     /// Find the first top-level JSON object in the text by matching braces.
     fn extract_json_substring(text: &str) -> Option<String> {
-        let start = text.find('{')?;
-        let mut depth = 0i32;
-        let mut end = None;
-        for (i, ch) in text[start..].char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = Some(start + i + 1);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        end.map(|e| text[start..e].to_string())
+        super::json_repair::extract_and_repair_json(text)
+            .map(|v| v.to_string())
     }
 
     /// Classify intent from plain text using keyword scanning.

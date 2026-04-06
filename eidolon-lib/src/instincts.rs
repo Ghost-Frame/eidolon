@@ -21,7 +21,7 @@ pub const GHOST_REPLACE_SIM: f32 = 0.85;
 
 // Binary file magic header
 const INST_MAGIC: &[u8; 4] = b"INST";
-const INST_VERSION: u32 = 1;
+const INST_VERSION: u32 = 2;
 
 // ---- Types ----
 
