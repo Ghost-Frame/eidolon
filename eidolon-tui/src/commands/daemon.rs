@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::{App, ClaudeSessionState};
 use crate::daemon::client::DaemonClient;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -96,6 +96,29 @@ pub fn handle(
                 }
             } else {
                 app.add_system_message("Daemon not connected. Use /daemon reconnect.");
+            }
+            true
+        }
+        "/claude" if parts.get(1) == Some(&"kill") => {
+            if let ClaudeSessionState::Active { ref session_id, .. } = app.claude_session.state.clone() {
+                if let Some(ref daemon) = daemon_client {
+                    let daemon = Arc::clone(daemon);
+                    let tx = system_tx.clone();
+                    let sid = session_id.clone();
+                    tokio::spawn(async move {
+                        match daemon.kill_session(&sid).await {
+                            Ok(()) => { let _ = tx.send(format!("Claude session {} killed.", sid)); }
+                            Err(e) => { let _ = tx.send(format!("Kill failed: {}", e)); }
+                        }
+                    });
+                    app.claude_session.state = crate::app::ClaudeSessionState::Failed {
+                        error: "Killed by user.".to_string(),
+                    };
+                } else {
+                    app.add_system_message("Daemon not connected -- cannot kill session.");
+                }
+            } else {
+                app.add_system_message("No active Claude session to kill.");
             }
             true
         }

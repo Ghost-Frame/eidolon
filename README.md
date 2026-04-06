@@ -35,7 +35,8 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 - **Recall, not retrieval.** Queries activate patterns and complete them. The answer comes from the network's state, not from ranked documents.
 - **Contradiction resolution.** Conflicting memories compete. The network converges on the stronger, more current pattern.
 - **Natural decay.** Unused associations fade. Patterns that never get reinforced become unreachable over time.
-- **Dreaming.** Offline consolidation replays patterns, strengthens important connections, and resolves interference during idle periods.
+- **Dreaming.** Offline consolidation replays patterns, strengthens important connections, and resolves interference during idle periods. Has a 20% chance of triggering a growth reflection afterward.
+- **Growth.** Post-dream reflection via Together.ai LLM. Observations accumulate in Engram and get injected into living prompts via `/growth/materialize`.
 - **Instincts.** New instances ship with pre-trained neural wiring for how to think. What to think about comes from operator data.
 - **Evolution.** Feedback reshapes connection weights. The brain adjusts what it emphasizes based on what turns out to be right or wrong.
 - **The Guardian.** A persistent daemon that spawns agents with living context from the brain, intercepts every action through a gate, blocks mistakes, and absorbs session learnings back.
@@ -65,6 +66,7 @@ The brain corrects the agent using maintained temporal understanding, not a sear
 |  /sessions     /prompt/generate  allow / block / enrich  |
 |  /activity     Engram context                            |
 |  /brain/*      + neural recall                           |
+|  /growth/*     reflection + observations + materialize   |
 |                                                          |
 |  Agent Registry    Session Absorber    Agent Wrapper     |
 |  claude-code       learnings -> brain  spawn + intercept |
@@ -199,6 +201,149 @@ All fan-out is best-effort. Individual service failures are logged but do not fa
 
 ---
 
+## Growth System
+
+The growth system gives Eidolon and its managed services the ability to reflect on their own behavior, accumulate observations over time, and inject that accumulated knowledge back into living prompts.
+
+### How It Works
+
+After each dream cycle, there is a 20% chance (`reflection_chance`) that the daemon calls `/growth/reflect` on itself. The reflection request contains a summary of the dream cycle results. An LLM (Together.ai) reads that context alongside previously accumulated observations, produces one new observation (or nothing if nothing is notable), and the observation is stored in Engram under `category=growth`. Over time, observations accumulate and get injected into living prompts via `/growth/materialize`.
+
+Other services in the Syntheos ecosystem can use the same endpoints to reflect on their own activity.
+
+### Endpoints
+
+**POST /growth/reflect**
+
+Send recent activity context to get an LLM-generated observation. Returns `null` if the LLM found nothing worth recording.
+
+```bash
+curl -s http://localhost:7700/growth/reflect \
+  -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{
+    "service": "eidolon",
+    "context": [
+      "Dream cycle completed in 340ms",
+      "Replayed 12 recent patterns, merged 3 redundant",
+      "Resolved 1 contradiction"
+    ],
+    "existing_growth": "optional -- prior growth log text to avoid repeating known observations",
+    "prompt_override": null
+  }'
+```
+
+Response:
+
+```json
+{ "observation": "Pattern merges are clustering around session-boundary memories, suggesting replay timing may need adjustment." }
+```
+
+Or if nothing notable:
+
+```json
+{ "observation": null }
+```
+
+Fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `service` | yes | Service name (`eidolon`, `claude-code`, `engram`, `chiasm`, `thymus`, or any string) |
+| `context` | yes | Array of strings describing recent activity |
+| `existing_growth` | no | Prior growth log text -- passed to the LLM to avoid repeating known observations |
+| `prompt_override` | no | Custom system prompt -- overrides the built-in domain prompt for this service |
+
+Successful observations are automatically fanned out to `/activity` as `growth.observed`.
+
+Returns `503` if the growth system is disabled in config.
+
+---
+
+**GET /growth/observations**
+
+Fetch raw growth observations from Engram.
+
+```bash
+curl -s "http://localhost:7700/growth/observations?service=eidolon&limit=20" \
+  -H "Authorization: Bearer $KEY"
+```
+
+Query params:
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `service` | (all) | Filter by service name |
+| `limit` | 20 | Max results (cap 100) |
+| `since` | (all time) | ISO 8601 timestamp lower bound |
+
+Response:
+
+```json
+{
+  "observations": [
+    { "content": "...", "source": "eidolon-growth", "created_at": "2026-04-05T12:00:00Z" }
+  ]
+}
+```
+
+---
+
+**GET /growth/materialize**
+
+Returns accumulated observations as formatted plain text, suitable for injection into a living prompt. Truncates at `max_bytes` to fit prompt budgets.
+
+```bash
+curl -s "http://localhost:7700/growth/materialize?service=eidolon&limit=30&max_bytes=8000" \
+  -H "Authorization: Bearer $KEY"
+```
+
+Query params:
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `service` | (all) | Filter by service name |
+| `limit` | 30 | Max observations to include (cap 100) |
+| `max_bytes` | 16000 | Hard byte cap on output |
+
+Response is plain text (`text/plain`):
+
+```
+# Growth Log
+
+Personality evolution and learnings accumulated over time.
+
+- [2026-04-05] Pattern merges are clustering around session-boundary memories.
+- [2026-04-04] Contradiction resolution improved after pruning stale edges from March.
+```
+
+Returns `# Growth Log\n\nNo observations yet.\n` if the store is empty.
+
+---
+
+### Configuration
+
+Add a `[growth]` section to `config.toml`:
+
+```toml
+[growth]
+enabled = true
+reflection_chance = 0.20        # probability of reflecting after each dream cycle
+llm_url = "https://api.together.xyz/v1/chat/completions"
+llm_model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+```
+
+All fields are optional -- the values above are the defaults.
+
+The API key is **not** stored in config. It is loaded at startup from credd:
+
+```
+together/api-key
+```
+
+The daemon calls `credd get together api-key` during initialization and stores the result in memory. If credd is unavailable at startup, `/growth/reflect` returns `500` with `"growth LLM API key not configured"`.
+
+---
+
 ## Getting Started
 
 ### Prerequisites
@@ -243,6 +388,13 @@ command = "claude"
 args = ["-p", "--output-format", "stream-json"]
 models = ["opus", "sonnet", "haiku"]
 default_model = "sonnet"
+
+[growth]
+enabled = true
+reflection_chance = 0.20
+llm_url = "https://api.together.xyz/v1/chat/completions"
+llm_model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+# API key loaded from credd at startup: together/api-key
 ```
 
 ### Development Setup
@@ -276,7 +428,7 @@ eidolon/
     src/
       agents/           # Agent registry and adapters (claude-code)
       prompt/           # Living prompt generator and templates
-      routes/           # HTTP routes (activity, gate, brain, sessions, tasks, audit)
+      routes/           # HTTP routes (activity, gate, brain, sessions, tasks, audit, growth)
       absorber.rs       # Session absorption back into brain
       session.rs        # Session lifecycle management
     tests/              # Security pentest suite (72 tests)

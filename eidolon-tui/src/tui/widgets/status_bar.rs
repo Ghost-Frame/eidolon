@@ -7,6 +7,7 @@ use ratatui::{
 use crate::tui::theme::Theme;
 use crate::tui::animation::AnimationState;
 use crate::llm::sidecar::SidecarStatus;
+use crate::app::{InputTarget, ClaudeSessionState};
 
 pub struct StatusBar<'a> {
     theme: &'a Theme,
@@ -15,6 +16,8 @@ pub struct StatusBar<'a> {
     context_tokens: u32,
     max_context_tokens: u32,
     active_agents: u32,
+    input_target: InputTarget,
+    claude_state: &'a ClaudeSessionState,
 }
 
 impl<'a> StatusBar<'a> {
@@ -25,8 +28,10 @@ impl<'a> StatusBar<'a> {
         context_tokens: u32,
         max_context_tokens: u32,
         active_agents: u32,
+        input_target: InputTarget,
+        claude_state: &'a ClaudeSessionState,
     ) -> Self {
-        Self { theme, animation, llm_status, context_tokens, max_context_tokens, active_agents }
+        Self { theme, animation, llm_status, context_tokens, max_context_tokens, active_agents, input_target, claude_state }
     }
 }
 
@@ -74,6 +79,35 @@ impl Widget for StatusBar<'_> {
                 x += 1;
             }
         }
+        x += 2;
+
+        // Input target indicator
+        let (target_str, target_color) = match self.input_target {
+            InputTarget::Tui => ("[TUI]", self.theme.gojo_text),
+            InputTarget::Claude => ("[Claude]", self.theme.accent),
+        };
+        for ch in target_str.chars() {
+            if x < area.right() {
+                buf[(x, area.y)].set_char(ch).set_style(Style::default().fg(target_color));
+                x += 1;
+            }
+        }
+        x += 1;
+
+        // Claude session state
+        let (claude_str, claude_color) = match self.claude_state {
+            ClaudeSessionState::Idle => ("claude:idle", self.theme.dim),
+            ClaudeSessionState::Starting => ("claude:starting", self.theme.warning),
+            ClaudeSessionState::Active { .. } => ("claude:active", self.theme.success),
+            ClaudeSessionState::Completed { .. } => ("claude:done", self.theme.text_secondary),
+            ClaudeSessionState::Failed { .. } => ("claude:err", self.theme.error),
+        };
+        for ch in claude_str.chars() {
+            if x < area.right() {
+                buf[(x, area.y)].set_char(ch).set_style(Style::default().fg(claude_color));
+                x += 1;
+            }
+        }
 
         // Right-aligned: LLM status, context usage, theme
         let llm_str = match self.llm_status {
@@ -101,10 +135,19 @@ impl Widget for StatusBar<'_> {
         let right_parts = format!("[{}] [{}] {} [{}]", llm_str, ctx_str, agents_str, theme_str);
         let right_start = area.right().saturating_sub(right_parts.len() as u16 + 1);
 
+        // Track character position to determine color; avoid byte-slicing which panics on
+        // multibyte characters. The "llm:" segment is always the first bracketed item in
+        // right_parts, so we just need to know whether we've passed the closing ']' of that
+        // segment. We detect this by character count rather than byte offset.
+        let llm_segment_end = right_parts.find(']').map(|b| {
+            // Convert byte offset to char index
+            right_parts[..=b].chars().count()
+        }).unwrap_or(0);
+
         let mut rx = right_start;
-        for ch in right_parts.chars() {
+        for (char_idx, ch) in right_parts.chars().enumerate() {
             if rx < area.right() {
-                let color = if right_parts[..(rx - right_start) as usize + 1].contains("llm:") {
+                let color = if char_idx < llm_segment_end {
                     llm_color
                 } else {
                     self.theme.dim

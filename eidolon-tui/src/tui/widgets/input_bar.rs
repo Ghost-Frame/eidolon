@@ -6,16 +6,18 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 use crate::tui::theme::Theme;
+use crate::app::InputTarget;
 
 pub struct InputBar<'a> {
     theme: &'a Theme,
     content: &'a str,
     cursor_pos: usize,
+    input_target: InputTarget,
 }
 
 impl<'a> InputBar<'a> {
-    pub fn new(theme: &'a Theme, content: &'a str, cursor_pos: usize) -> Self {
-        Self { theme, content, cursor_pos }
+    pub fn new(theme: &'a Theme, content: &'a str, cursor_pos: usize, input_target: InputTarget) -> Self {
+        Self { theme, content, cursor_pos, input_target }
     }
 }
 
@@ -29,7 +31,11 @@ impl Widget for InputBar<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let prompt = "> ";
+        let (tag, tag_color) = match self.input_target {
+            InputTarget::Tui => ("[TAB: TUI] > ", self.theme.gojo_text),
+            InputTarget::Claude => ("[TAB: Claude] > ", self.theme.tool_call),
+        };
+        let prompt = tag;
         let prompt_len = prompt.len();
         let visible_width = (inner.width as usize).saturating_sub(prompt_len);
 
@@ -62,7 +68,7 @@ impl Widget for InputBar<'_> {
         let display_prompt = if scroll_offset > 0 { "<" } else { prompt };
 
         let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled(display_prompt, Style::default().fg(self.theme.accent)),
+            Span::styled(display_prompt, Style::default().fg(tag_color)),
             Span::styled(visible_before, Style::default().fg(self.theme.user_text)),
             Span::styled(cursor_char, cursor_style),
             Span::styled(visible_after, Style::default().fg(self.theme.user_text)),

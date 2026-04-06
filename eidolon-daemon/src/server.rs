@@ -15,7 +15,7 @@ use tower_http::trace::TraceLayer;
 use crate::AppState;
 use crate::UserIdentity;
 use crate::audit::AuditRecord;
-use crate::routes::{activity, audit as audit_route, brain, gate, prompt, sessions, tasks};
+use crate::routes::{activity, audit as audit_route, brain, gate, growth, prompt, sessions, tasks};
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({
@@ -220,6 +220,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/brain/dream", post(brain::brain_dream))
         .route("/gate/check", post(gate::gate_check))
         .route("/gate/complete", post(gate::gate_complete))
+        .route("/growth/reflect", post(growth::growth_reflect))
+        .route("/growth/observations", get(growth::growth_observations))
+        .route("/growth/materialize", get(growth::growth_materialize))
         .route("/prompt/generate", post(prompt::generate_prompt))
         .route("/audit", get(audit_route::get_audit_log))
         .layer(middleware::from_fn_with_state(

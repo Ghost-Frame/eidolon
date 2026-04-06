@@ -83,18 +83,28 @@ impl ConversationManager {
     }
 
     /// Build message history for LLM API calls (system prompt + context window).
+    /// Enforces strict alternation: system -> user -> assistant -> user -> ...
     pub fn build_api_messages(&self) -> Vec<(String, String)> {
-        self.get_context_window()
-            .iter()
-            .map(|m| {
-                let role = match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                };
-                (role, m.content.clone())
-            })
-            .collect()
+        let mut result: Vec<(String, String)> = Vec::new();
+        for m in self.get_context_window() {
+            let role = match m.role {
+                Role::System => "system".to_string(),
+                Role::User => "user".to_string(),
+                Role::Assistant => "assistant".to_string(),
+            };
+            if let Some(last) = result.last_mut() {
+                if last.0 == role && role != "system" {
+                    last.1.push('\n');
+                    last.1.push_str(&m.content);
+                    continue;
+                }
+                if last.0 == "system" && role == "assistant" {
+                    continue;
+                }
+            }
+            result.push((role, m.content.clone()));
+        }
+        result
     }
 
     pub fn get_context_window(&self) -> Vec<&Message> {

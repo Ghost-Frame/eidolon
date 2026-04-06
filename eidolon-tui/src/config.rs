@@ -12,6 +12,7 @@ pub struct Config {
     pub brain: BrainConfig,
     pub session: SessionConfig,
     pub daemon: DaemonConfig,
+    pub claude: ClaudeConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,6 +68,17 @@ pub struct TuiConfig {
     pub background_pattern: bool,
     pub animations: bool,
     pub fps: u32,
+    pub panel_split: u16,
+    pub mouse_enabled: bool,
+    pub default_input_target: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ClaudeConfig {
+    pub spawn_method: String,
+    pub cli_path: String,
+    pub default_model: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -111,6 +123,7 @@ impl Default for Config {
             brain: BrainConfig::default(),
             session: SessionConfig::default(),
             daemon: DaemonConfig::default(),
+            claude: ClaudeConfig::default(),
         }
     }
 }
@@ -119,7 +132,7 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             model_path: String::new(),
-            model_name: "qwen3-14b".to_string(),
+            model_name: "mistral-nemo".to_string(),
             server_path: "llama-server".to_string(),
             context_length: 8192,
             port: 8080,
@@ -179,6 +192,19 @@ impl Default for TuiConfig {
             background_pattern: true,
             animations: true,
             fps: 30,
+            panel_split: 50,
+            mouse_enabled: true,
+            default_input_target: "tui".to_string(),
+        }
+    }
+}
+
+impl Default for ClaudeConfig {
+    fn default() -> Self {
+        Self {
+            spawn_method: "cli".to_string(),
+            cli_path: "claude".to_string(),
+            default_model: "opus".to_string(),
         }
     }
 }

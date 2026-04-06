@@ -17,9 +17,11 @@ use crate::llm::client::LlmClient;
 use crate::llm::sidecar::{LlamaSidecar, SidecarStatus};
 use crate::syntheos::engram::EngramClient;
 use crate::tui::terminal;
+use crate::app::InputTarget;
+use crate::app::ClaudeSessionState;
 use crate::tui::widgets::{
-    agent_panel::AgentPanel,
     chat_area::ChatArea,
+    claude_panel::ClaudePanel,
     input_bar::InputBar,
     status_bar::StatusBar,
     thinking::ThinkingSpinner,
@@ -230,8 +232,20 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 
         // --- RENDER ---
         let input_height = (app.input.lines().count().max(1) + 2).min(8) as u16;
+        let elapsed_secs = match &app.claude_session.state {
+            ClaudeSessionState::Active { started_at, .. } => started_at.elapsed().as_secs(),
+            _ => app.claude_session.started_at.map(|t| t.elapsed().as_secs()).unwrap_or(0),
+        };
+        let split_pct = app.panel_split_percent;
         tui.draw(|frame| {
-            let chunks = Layout::default()
+            // Fill entire frame with theme background
+            frame.render_widget(
+                ratatui::widgets::Block::default()
+                    .style(ratatui::style::Style::default().bg(app.theme.bg)),
+                frame.area(),
+            );
+            // Vertical: [status_bar (1)] [panels (flex)] [input_bar]
+            let v_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Length(1),
@@ -248,8 +262,27 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 app.context_tokens,
                 app.config.llm.context_length,
                 0,
+                app.input_target,
+                &app.claude_session.state,
             );
-            frame.render_widget(status, chunks[0]);
+            frame.render_widget(status, v_chunks[0]);
+
+            // Horizontal: [left: TUI chat (split%)] [right: Claude panel (100-split%)]
+            let panel_area = v_chunks[1];
+            let h_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(split_pct),
+                    Constraint::Percentage(100 - split_pct),
+                ])
+                .split(panel_area);
+
+            let left_rect = h_chunks[0];
+            let right_rect = h_chunks[1];
+
+            // Store rects and divider col for mouse hit testing (captured via closure refs)
+            // We use local vars here; the app fields are updated after draw via separate mutation
+            let divider = left_rect.x + left_rect.width;
 
             let mut display_messages = app.display_messages();
             if (app.mode == AppMode::Generating || app.mode == AppMode::Routing)
@@ -261,66 +294,74 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                     is_user: false,
                 });
             }
-            // Split chat area horizontally if agent panel is visible
-            let (chat_area, panel_area) = if app.show_agent_panel {
-                let h_chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-                    .split(chunks[1]);
-                (h_chunks[0], Some(h_chunks[1]))
-            } else {
-                (chunks[1], None)
-            };
 
-            let chat = ChatArea::new(app.theme, &display_messages, app.scroll_offset);
-            frame.render_widget(chat, chat_area);
+            let chat = ChatArea::new(
+                app.theme,
+                &display_messages,
+                app.tui_scroll_offset,
+                app.input_target == InputTarget::Tui,
+            );
+            frame.render_widget(chat, left_rect);
 
-            // Render agent panel if toggled
-            if let Some(panel_rect) = panel_area {
-                // Show active agent sessions or empty state
-                if let Some((session_id, lines)) = app.agent_outputs.iter().next() {
-                    let agent_panel = AgentPanel::new(
-                        app.theme,
-                        &app.animation,
-                        "agent",
-                        session_id,
-                        0,
-                        lines,
-                        matches!(app.mode, AppMode::Generating | AppMode::AgentActive { .. }),
-                    );
-                    frame.render_widget(agent_panel, panel_rect);
-                } else {
-                    // Empty state
-                    let empty = ratatui::widgets::Paragraph::new("No active sessions")
-                        .style(ratatui::style::Style::default().fg(app.theme.dim))
-                        .block(
-                            ratatui::widgets::Block::default()
-                                .borders(ratatui::widgets::Borders::ALL)
-                                .border_style(ratatui::style::Style::default().fg(app.theme.dim))
-                                .title(ratatui::text::Span::styled(
-                                    " Agents ",
-                                    ratatui::style::Style::default().fg(app.theme.accent),
-                                ))
-                                .style(ratatui::style::Style::default().bg(app.theme.bg_secondary)),
-                        );
-                    frame.render_widget(empty, panel_rect);
-                }
-            }
-
+            // Thinking spinner on left panel only
             if app.mode == AppMode::Generating || app.mode == AppMode::Routing {
                 let spinner = ThinkingSpinner::new(app.theme, &app.animation);
                 let spinner_area = ratatui::layout::Rect {
-                    x: chat_area.x + 2,
-                    y: chat_area.bottom().saturating_sub(1),
-                    width: chat_area.width.saturating_sub(4),
+                    x: left_rect.x + 2,
+                    y: left_rect.bottom().saturating_sub(1),
+                    width: left_rect.width.saturating_sub(4),
                     height: 1,
                 };
                 frame.render_widget(spinner, spinner_area);
             }
 
-            let input = InputBar::new(app.theme, &app.input, app.cursor_pos);
-            frame.render_widget(input, chunks[2]);
+            let claude = ClaudePanel::new(
+                app.theme,
+                &app.animation,
+                &app.claude_session,
+                app.input_target == InputTarget::Claude,
+                elapsed_secs,
+            );
+            frame.render_widget(claude, right_rect);
+
+            let input = InputBar::new(app.theme, &app.input, app.cursor_pos, app.input_target);
+            frame.render_widget(input, v_chunks[2]);
+
+            // Store layout rects for mouse hit testing -- use a thread_local trick via
+            // a raw pointer write. Since draw closure borrows app immutably we store via
+            // the captured locals after draw completes.
+            let _ = (left_rect, right_rect, divider); // keep them alive in closure
         })?;
+
+        // Update stored rects after draw (borrow released)
+        {
+            let sz = tui.size()?;
+            let frame_area = ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: sz.width,
+                height: sz.height,
+            };
+            let v_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(5),
+                    Constraint::Length(input_height),
+                ])
+                .split(frame_area);
+            let panel_area = v_chunks[1];
+            let h_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(split_pct),
+                    Constraint::Percentage(100 - split_pct),
+                ])
+                .split(panel_area);
+            app.left_panel_rect = h_chunks[0];
+            app.right_panel_rect = h_chunks[1];
+            app.divider_col = h_chunks[0].x + h_chunks[0].width;
+        }
 
         // --- POLL ROUTING RESULT ---
         if let Some(rx) = app.routing_rx.as_mut() {
@@ -359,9 +400,24 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                     app.pending_response.clear();
                                     app.token_rx = None;
 
-                                    if matches!(app.sidecar_status, SidecarStatus::Ready) {
-                                        // Run intelligence pipeline (compress -> distill -> select)
-                                        app.pending_decision = Some(decision.clone());
+                                    app.pending_decision = Some(decision.clone());
+
+                                    if let Some(ref daemon) = daemon_client {
+                                        // Daemon connected -- delegate prompt generation to daemon
+                                        app.mode = AppMode::Optimizing;
+                                        app.add_system_message("Generating prompt via daemon...");
+
+                                        let daemon = Arc::clone(daemon);
+                                        let umsg = user_msg.clone();
+                                        let (tx, rx) = oneshot::channel();
+                                        app.daemon_prompt_rx = Some(rx);
+
+                                        tokio::spawn(async move {
+                                            let result = daemon.generate_prompt(&umsg, "claude").await;
+                                            let _ = tx.send(result);
+                                        });
+                                    } else if matches!(app.sidecar_status, SidecarStatus::Ready) {
+                                        // No daemon -- fall back to local pipeline (compress -> distill -> select)
                                         app.mode = AppMode::Optimizing;
                                         app.add_system_message("Optimizing prompt...");
 
@@ -384,13 +440,12 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                             let _ = tx.send(result);
                                         });
                                     } else {
-                                        // Sidecar unavailable -- skip pipeline
+                                        // Neither daemon nor sidecar available -- skip optimization
                                         let agent = decision.agent_needed.clone()
                                             .unwrap_or_else(|| "claude".to_string());
                                         let model = decision.select_model(&app.config.agents);
                                         let complexity = format!("{:?}", decision.complexity).to_lowercase();
                                         let reasoning = decision.reasoning.clone();
-                                        app.pending_decision = Some(decision);
                                         app.mode = AppMode::AwaitingConfirmation;
                                         app.add_system_message(&format!(
                                             "I'd use {} for this ({} complexity -> {}). {}\n\nSay yes to proceed, or tell me what to do differently.",
@@ -434,6 +489,71 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        // --- POLL DAEMON PROMPT RESULT ---
+        if app.mode == AppMode::Optimizing {
+            if let Some(rx) = app.daemon_prompt_rx.as_mut() {
+                match rx.try_recv() {
+                    Ok(result) => {
+                        app.daemon_prompt_rx = None;
+                        match result {
+                            Ok(prompt) => {
+                                // Show the daemon-generated prompt in Claude panel for preview
+                                app.claude_session.messages.push(
+                                    format!("--- Pending dispatch (daemon prompt) ---\n{}", prompt)
+                                );
+                                app.pending_daemon_prompt = Some(prompt.clone());
+
+                                // Show approval in left panel with agent/model info
+                                let agent = app.pending_decision.as_ref()
+                                    .and_then(|d| d.agent_needed.clone())
+                                    .unwrap_or_else(|| "claude".to_string());
+                                let model = app.pending_decision.as_ref()
+                                    .map(|d| d.select_model(&app.config.agents))
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                let complexity = app.pending_decision.as_ref()
+                                    .map(|d| format!("{:?}", d.complexity).to_lowercase())
+                                    .unwrap_or_else(|| "medium".to_string());
+                                app.mode = AppMode::AwaitingConfirmation;
+                                app.add_system_message(&format!(
+                                    "Agent: {} ({})\nComplexity: {}\n\nPrompt preview is in the right panel.\n\nSay yes to proceed, or tell me what to change.",
+                                    agent, model, complexity
+                                ));
+                            }
+                            Err(e) => {
+                                // Daemon prompt failed -- show simple confirmation without preview
+                                app.pending_daemon_prompt = None;
+                                let agent = app.pending_decision.as_ref()
+                                    .and_then(|d| d.agent_needed.clone())
+                                    .unwrap_or_else(|| "claude".to_string());
+                                let model = app.pending_decision.as_ref()
+                                    .map(|d| d.select_model(&app.config.agents))
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                app.mode = AppMode::AwaitingConfirmation;
+                                app.add_system_message(&format!(
+                                    "Daemon prompt generation failed: {}\n\nUse {} ({}) with original message?\n\nSay yes to proceed.",
+                                    e, agent, model
+                                ));
+                            }
+                        }
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {}
+                    Err(oneshot::error::TryRecvError::Closed) => {
+                        app.daemon_prompt_rx = None;
+                        app.mode = AppMode::AwaitingConfirmation;
+                        if let Some(ref decision) = app.pending_decision {
+                            let agent = decision.agent_needed.clone()
+                                .unwrap_or_else(|| "claude".to_string());
+                            let model = decision.select_model(&app.config.agents);
+                            app.add_system_message(&format!(
+                                "Daemon prompt task crashed. Use {} ({}) with original message?\n\nSay yes to proceed.",
+                                agent, model
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         // --- POLL PIPELINE RESULT ---
         if app.mode == AppMode::Optimizing {
             if let Some(rx) = app.pipeline_rx.as_mut() {
@@ -441,6 +561,9 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                     Ok(result) => {
                         app.pipeline_rx = None;
                         let approval_text = result.format_for_approval();
+                        // Show preview in Claude panel
+                        let preview = format!("--- Pending dispatch ---\n{}", result.distilled.format_for_display());
+                        app.claude_session.messages.push(preview);
                         app.pending_pipeline_result = Some(result);
                         app.mode = AppMode::AwaitingConfirmation;
                         app.add_system_message(&approval_text);
@@ -502,6 +625,70 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        // --- DRAIN CLAUDE OUTPUT ---
+        if let Some(rx) = app.claude_output_rx.as_mut() {
+            let mut done = false;
+            let mut session_ended = false;
+            let mut session_exit_code: i32 = 0;
+            let mut session_failed: Option<String> = None;
+
+            loop {
+                match rx.try_recv() {
+                    Ok(line) => {
+                        // Parse lifecycle messages
+                        if line.contains("[Session ended:") {
+                            // Extract exit code from "[Session ended: <status> (exit code <n>)]"
+                            let exit_code = line
+                                .find("exit code ")
+                                .and_then(|i| {
+                                    line[i + 10..]
+                                        .trim_end_matches(']')
+                                        .trim()
+                                        .parse::<i32>()
+                                        .ok()
+                                })
+                                .unwrap_or(0);
+                            session_exit_code = exit_code;
+                            session_ended = true;
+                            app.claude_session.messages.push(line);
+                        } else if line.contains("[error]") || line.contains("[WebSocket error:") {
+                            session_failed = Some(line.clone());
+                            app.claude_session.messages.push(line);
+                        } else {
+                            app.claude_session.messages.push(line);
+                        }
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        done = true;
+                        break;
+                    }
+                }
+            }
+
+            if session_ended || done || session_failed.is_some() {
+                if let Some(error_msg) = session_failed {
+                    app.claude_session.state = ClaudeSessionState::Failed {
+                        error: error_msg,
+                    };
+                    app.add_system_message("Claude session failed. Check right panel.");
+                } else if session_ended || done {
+                    if let ClaudeSessionState::Active { ref session_id, .. } =
+                        app.claude_session.state.clone()
+                    {
+                        let sid = session_id.clone();
+                        app.claude_session.state = ClaudeSessionState::Completed {
+                            session_id: sid,
+                            exit_code: session_exit_code,
+                        };
+                    }
+                    app.add_system_message("Claude finished. Check right panel.");
+                }
+                // Clear the channel on done, session_ended, OR failure (not just the first two)
+                app.claude_output_rx = None;
+            }
+        }
+
         // --- POLL SYNTHESIS RESULT ---
         if let Some(rx) = app.synthesis_rx.as_mut() {
             match rx.try_recv() {
@@ -545,7 +732,8 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 
         // --- INPUT EVENTS ---
         let timeout = Duration::from_millis(app.animation.frame_duration_ms());
-        if let Some(event) = terminal::poll_event(timeout) {
+        let mouse_enabled = app.config.tui.mouse_enabled;
+        if let Some(event) = terminal::poll_event(timeout, mouse_enabled) {
             match event {
                 terminal::AppEvent::Key(key) => {
                     match (key.modifiers, key.code) {
@@ -559,6 +747,26 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                             app.clear_messages();
                             app.add_system_message("Screen cleared. I'm still here though. Obviously.");
                         }
+                        (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
+                            let text = match app.input_target {
+                                InputTarget::Tui => app.last_tui_assistant_message(),
+                                InputTarget::Claude => app.last_claude_message(),
+                            };
+                            match text {
+                                Some(t) if !t.is_empty() => {
+                                    match arboard::Clipboard::new() {
+                                        Ok(mut cb) => {
+                                            match cb.set_text(&t) {
+                                                Ok(_) => app.add_system_message("Copied to clipboard."),
+                                                Err(e) => app.add_system_message(&format!("Clipboard error: {}", e)),
+                                            }
+                                        }
+                                        Err(e) => app.add_system_message(&format!("Clipboard unavailable: {}", e)),
+                                    }
+                                }
+                                _ => app.add_system_message("Nothing to copy."),
+                            }
+                        }
                         (KeyModifiers::CONTROL, KeyCode::Char('e')) => {
                             app.show_raw_output = !app.show_raw_output;
                             if let Some(ref synth) = app.last_synthesized {
@@ -569,20 +777,52 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
-                            app.show_agent_panel = !app.show_agent_panel;
+                        (_, KeyCode::Tab) => {
+                            app.input_target = match app.input_target {
+                                InputTarget::Tui => InputTarget::Claude,
+                                InputTarget::Claude => InputTarget::Tui,
+                            };
                         }
                         (KeyModifiers::SHIFT, KeyCode::Enter) => {
                             app.handle_input_char('\n');
                         }
                         (_, KeyCode::Enter) => {
-                            if let Some(msg) = app.submit_input() {
-                                if msg.starts_with('/') {
-                                    commands::handle_command(&mut app, &msg, &daemon_client, &system_msg_tx);
-                                } else if app.mode == AppMode::AwaitingConfirmation {
-                                    handle_confirmation(&mut app, &msg, &daemon_client);
-                                } else if app.mode == AppMode::Normal {
-                                    dispatch::dispatch_message(&mut app, &llm_client, &engram_client, msg);
+                            match app.input_target {
+                                InputTarget::Tui => {
+                                    if let Some(msg) = app.submit_input() {
+                                        if msg.starts_with('/') {
+                                            commands::handle_command(&mut app, &msg, &daemon_client, &system_msg_tx);
+                                        } else if app.mode == AppMode::AwaitingConfirmation {
+                                            handle_confirmation(&mut app, &msg, &daemon_client);
+                                        } else if app.mode == AppMode::Normal {
+                                            dispatch::dispatch_message(&mut app, &llm_client, &engram_client, msg);
+                                        }
+                                    }
+                                }
+                                InputTarget::Claude => {
+                                    if !app.input.is_empty() {
+                                        let msg = app.input.clone();
+                                        app.input.clear();
+                                        app.cursor_pos = 0;
+                                        app.claude_session.messages.push(format!("> You: {}", msg));
+                                        if let ClaudeSessionState::Active { ref session_id, .. } = app.claude_session.state {
+                                            if let Some(ref daemon) = daemon_client {
+                                                let daemon = Arc::clone(daemon);
+                                                let sid = session_id.clone();
+                                                let input = msg;
+                                                let sys_tx = system_msg_tx.clone();
+                                                tokio::spawn(async move {
+                                                    if let Err(e) = daemon.send_input(&sid, &input).await {
+                                                        let _ = sys_tx.send(format!("Failed to send to Claude: {}", e));
+                                                    }
+                                                });
+                                            } else {
+                                                app.claude_session.messages.push("[No daemon connected]".to_string());
+                                            }
+                                        } else {
+                                            app.claude_session.messages.push("[No active session]".to_string());
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -608,6 +848,81 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 terminal::AppEvent::Tick => {}
+                terminal::AppEvent::Mouse(mouse) => {
+                    use crossterm::event::{MouseButton, MouseEventKind};
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            let col = mouse.column;
+                            let row = mouse.row;
+                            // Divider drag detection (+/- 1 column)
+                            if col >= app.divider_col.saturating_sub(1)
+                                && col <= app.divider_col + 1
+                                && row >= app.left_panel_rect.top()
+                                && row < app.left_panel_rect.bottom()
+                            {
+                                app.dragging_divider = true;
+                            }
+                            // Click left panel
+                            else if col < app.divider_col
+                                && row >= app.left_panel_rect.top()
+                                && row < app.left_panel_rect.bottom()
+                            {
+                                app.input_target = InputTarget::Tui;
+                            }
+                            // Click right panel
+                            else if col >= app.divider_col
+                                && row >= app.right_panel_rect.top()
+                                && row < app.right_panel_rect.bottom()
+                            {
+                                app.input_target = InputTarget::Claude;
+                            }
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            app.dragging_divider = false;
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            if app.dragging_divider {
+                                let total_width =
+                                    app.left_panel_rect.width + app.right_panel_rect.width;
+                                if total_width > 0 {
+                                    let relative_col =
+                                        mouse.column.saturating_sub(app.left_panel_rect.x);
+                                    let new_pct =
+                                        ((relative_col as u32 * 100) / total_width as u32).min(100) as u16;
+                                    app.panel_split_percent = new_pct.clamp(20, 80);
+                                }
+                            }
+                        }
+                        MouseEventKind::ScrollUp => {
+                            // Scroll up = move viewport toward older content = decrease offset
+                            if mouse.column < app.divider_col {
+                                app.tui_scroll_offset =
+                                    app.tui_scroll_offset.saturating_sub(3);
+                            } else {
+                                app.claude_session.scroll_offset =
+                                    app.claude_session.scroll_offset.saturating_sub(3);
+                                app.claude_session.auto_scroll = false;
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            // Scroll down = move viewport toward newer content = increase offset
+                            if mouse.column < app.divider_col {
+                                app.tui_scroll_offset =
+                                    app.tui_scroll_offset.saturating_add(3);
+                            } else {
+                                if app.claude_session.scroll_offset == 0 {
+                                    app.claude_session.auto_scroll = true;
+                                }
+                                app.claude_session.scroll_offset =
+                                    app.claude_session.scroll_offset.saturating_add(3);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                terminal::AppEvent::Resize(_, _) => {
+                    // Terminal handles redraw automatically, just need to not ignore it
+                }
                 _ => {}
             }
         }
@@ -652,53 +967,26 @@ fn handle_confirmation(
             let agent_name = decision.agent_needed
                 .clone()
                 .unwrap_or_else(|| "claude".to_string());
-            // Use distilled prompt from pipeline if available, otherwise raw user message
-            let task = app.pending_pipeline_result.as_ref()
-                .map(|p| p.distilled.format_for_agent())
+            // Priority: daemon prompt > local pipeline distilled > raw user message
+            let task = app.pending_daemon_prompt.take()
+                .or_else(|| app.pending_pipeline_result.as_ref().map(|p| p.distilled.format_for_agent()))
                 .unwrap_or_else(|| app.pending_user_message.clone());
             let selected_model = app.pending_pipeline_result.as_ref()
                 .map(|p| p.selection.model.clone())
                 .unwrap_or_else(|| decision.select_model(&app.config.agents));
-            let complexity = format!("{:?}", decision.complexity).to_lowercase();
 
             if let Some(ref daemon) = daemon_client {
-                let daemon = Arc::clone(daemon);
-                let task_clone = task;
-                let agent_clone = agent_name.clone();
                 let model_clone = selected_model.clone();
 
+                let claude_rx = dispatch::dispatch_to_claude(&task, &agent_name, &selected_model, daemon);
+                app.claude_output_rx = Some(claude_rx);
+                app.start_claude_session("pending".to_string(), selected_model.clone());
+                app.mode = AppMode::Normal;
+
                 app.add_system_message(&format!(
-                    "Spawning {} ({} - {}) via daemon. Stand back.",
-                    agent_clone, complexity, model_clone
+                    "Dispatched to Claude ({}). Watch the right panel.",
+                    model_clone
                 ));
-
-                let (tx, rx) = mpsc::unbounded_channel();
-                app.pending_response.clear();
-                app.token_rx = Some(rx);
-                app.mode = AppMode::Generating;
-
-                tokio::spawn(async move {
-                    // Try to enrich task via daemon prompt generation
-                    let final_task = match daemon.generate_prompt(&task_clone, &agent_clone).await {
-                        Ok(enriched) => enriched,
-                        Err(_) => task_clone, // Fall back to distilled prompt as-is
-                    };
-
-                    match daemon.submit_task(&final_task, &agent_clone, &model_clone).await {
-                        Ok(session) => {
-                            let _ = tx.send(format!(
-                                "[Daemon session {} started]\n",
-                                session.session_id
-                            ));
-                            if let Err(e) = daemon.stream_session(&session.session_id, tx.clone()).await {
-                                let _ = tx.send(format!("\n[Stream error: {}]", e));
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx.send(format!("[Daemon error: {}]", e));
-                        }
-                    }
-                });
             } else {
                 app.add_system_message(
                     "Daemon not connected -- cannot spawn agents. Configure [daemon] in config.toml with url and api_key."
@@ -709,11 +997,37 @@ fn handle_confirmation(
             app.mode = AppMode::Normal;
         }
     } else {
-        // User gave different instructions -- treat as new message
+        // Check for explicit cancellation
+        let cancel_words = ["no", "n", "cancel", "nevermind", "nah", "stop"];
+        if cancel_words.contains(&lower.as_str()) {
+            app.mode = AppMode::Normal;
+            app.pending_decision = None;
+            app.pending_daemon_prompt = None;
+            app.pending_pipeline_result = None;
+            app.add_system_message("Cancelled.");
+            return;
+        }
+
+        // Anything else = edit instruction -- refine the prompt
+        if let Some(ref mut prompt) = app.pending_daemon_prompt {
+            *prompt = format!("{}\n\nAdditional instruction: {}", prompt, msg);
+            let updated = format!("--- Updated prompt ---\n{}", prompt);
+            app.claude_session.messages.push(updated);
+            app.add_system_message("Prompt updated. Say 'yes' to proceed or keep refining.");
+            return;
+        }
+        // If there's a pipeline result, update the distilled objective
+        if let Some(ref mut result) = app.pending_pipeline_result {
+            result.distilled.objective = format!("{}\n\nAdditional: {}", result.distilled.objective, msg);
+            let updated = format!("--- Updated prompt ---\n{}", result.distilled.format_for_display());
+            app.claude_session.messages.push(updated);
+            app.add_system_message("Prompt updated. Say 'yes' to proceed or keep refining.");
+            return;
+        }
+        // Fallback: treat as cancel
         app.mode = AppMode::Normal;
         app.pending_decision = None;
         app.pending_pipeline_result = None;
-        // Note: message was already added to conversation by submit_input()
-        // Re-dispatch would double-add it. Just reset to normal mode.
+        app.pending_daemon_prompt = None;
     }
 }

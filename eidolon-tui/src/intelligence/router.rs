@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use crate::llm::client::LlmClient;
-use crate::llm::grammar::intent_routing_grammar;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -168,13 +167,20 @@ impl RoutingDecision {
         model_name: &str,
         temperature: f32,
     ) -> Result<Self, String> {
-        let grammar = intent_routing_grammar();
-        let system = r#"You are a routing system. Classify the user's intent and task complexity. Output JSON only.
+        let system = r#"You are a routing system. Classify the user's intent and task complexity. Respond with ONLY a JSON object, no other text.
 
-Complexity guide:
-- "light": simple tasks - write a small file, fix a typo, rename something, quick lookup, one-file changes
-- "medium": moderate tasks - implement a feature, debug an issue, refactor a module, multi-file edits
-- "heavy": complex tasks - architectural changes, multi-system work, security-sensitive operations, large refactors"#;
+Intent values:
+- "casual": general chat, questions, greetings, opinions
+- "memory": recall past info, search history, "what was", "remember when"
+- "action": do something with code/tools -- fix, build, deploy, create, debug, implement
+
+Complexity values:
+- "light": simple tasks -- write a small file, fix a typo, rename something, quick lookup
+- "medium": moderate tasks -- implement a feature, debug an issue, refactor a module
+- "heavy": complex tasks -- architectural changes, multi-system work, large refactors
+
+Required JSON format:
+{"intent": "casual|memory|action", "confidence": 0.0-1.0, "complexity": "light|medium|heavy", "tools_needed": [], "agent_needed": null, "reasoning": "brief explanation"}"#;
         let msgs: &[(&str, &str)] = &[
             ("system", system),
             ("user", user_message),
@@ -183,9 +189,9 @@ Complexity guide:
             model_name,
             msgs,
             temperature,
-            Some(&grammar),
+            None,
         );
-        request.max_tokens = Some(150);
+        request.max_tokens = Some(512);
 
         let resp = tokio::time::timeout(
             std::time::Duration::from_secs(15),

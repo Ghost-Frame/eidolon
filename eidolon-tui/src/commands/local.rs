@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::{App, ClaudeSessionState};
 use crate::config::resolve_model_alias;
 
 /// Handle local (non-daemon) slash commands. Returns true if handled.
@@ -71,22 +71,68 @@ pub fn handle(app: &mut App, msg: &str) -> bool {
                 if app.config.daemon.api_key.is_empty() { "not configured" } else { "configured" },
                 app.config.daemon.url
             );
+            let claude_state = match &app.claude_session.state {
+                ClaudeSessionState::Idle => "idle".to_string(),
+                ClaudeSessionState::Starting => "starting".to_string(),
+                ClaudeSessionState::Active { session_id, .. } => format!("active ({})", session_id),
+                ClaudeSessionState::Completed { exit_code, .. } => format!("completed (exit {})", exit_code),
+                ClaudeSessionState::Failed { error } => format!("failed: {}", error),
+            };
             app.add_system_message(&format!(
-                "LLM: {}\nEngram: {}\n{}\nModels: light={}, medium={}, heavy={}",
+                "LLM: {}\nEngram: {}\n{}\nModels: light={}, medium={}, heavy={}\nClaude panel: {}",
                 sidecar, app.config.engram.url, daemon_status,
-                c.model_light, c.model_medium, c.model_heavy
+                c.model_light, c.model_medium, c.model_heavy,
+                claude_state
             ));
             true
         }
         "/help" => {
             app.add_system_message(
-                "Commands:\n  /model             - show/set model tiers\n  /status            - system status\n  /theme <name>      - switch theme\n  /daemon            - daemon connection status\n  /daemon reconnect  - reconnect to daemon\n  /brain             - brain stats from daemon\n  /sessions          - list daemon sessions\n  /sessions kill <id> - kill a session\n  /dream             - trigger dream cycle\n  /clear             - clear chat (or Ctrl+L)\n  /quit              - exit"
+                "Commands:\n  /model             - show/set model tiers\n  /status            - system status\n  /theme <name>      - switch theme\n  /daemon            - daemon connection status\n  /daemon reconnect  - reconnect to daemon\n  /brain             - brain stats from daemon\n  /sessions          - list daemon sessions\n  /sessions kill <id> - kill a session\n  /dream             - trigger dream cycle\n  /claude            - show Claude session state\n  /claude kill       - kill active Claude session\n  /claude clear      - clear Claude panel\n  /clear             - clear chat (or Ctrl+L)\n  /quit              - exit"
             );
             true
         }
         "/clear" => {
             app.clear_messages();
             app.add_system_message("Screen cleared. I'm still here though. Obviously.");
+            true
+        }
+        "/claude" => {
+            let subcommand = parts.get(1).copied().unwrap_or("");
+            match subcommand {
+                "clear" => {
+                    app.claude_session.clear();
+                    app.add_system_message("Claude panel cleared.");
+                }
+                "" => {
+                    let state_str = match &app.claude_session.state {
+                        ClaudeSessionState::Idle => "idle".to_string(),
+                        ClaudeSessionState::Starting => "starting...".to_string(),
+                        ClaudeSessionState::Active { session_id, .. } => {
+                            format!("active (session: {})", session_id)
+                        }
+                        ClaudeSessionState::Completed { session_id, exit_code } => {
+                            format!("completed (session: {}, exit: {})", session_id, exit_code)
+                        }
+                        ClaudeSessionState::Failed { error } => {
+                            format!("failed: {}", error)
+                        }
+                    };
+                    let model = if app.claude_session.model.is_empty() {
+                        "none".to_string()
+                    } else {
+                        app.claude_session.model.clone()
+                    };
+                    let msgs = app.claude_session.messages.len();
+                    app.add_system_message(&format!(
+                        "Claude session: {}\nModel: {}\nMessages: {}",
+                        state_str, model, msgs
+                    ));
+                }
+                _ => {
+                    app.add_system_message("Usage: /claude, /claude clear, /claude kill");
+                }
+            }
             true
         }
         "/quit" | "/exit" => {
