@@ -349,7 +349,7 @@ The daemon calls `credd get together api-key` during initialization and stores t
 ### Prerequisites
 
 - Rust 1.75+
-- [Engram](https://codeberg.org/GhostFrame/engram) running and accessible
+- [Engram](https://github/Ghost-Frame/engram) running and accessible
 
 ### Build
 
