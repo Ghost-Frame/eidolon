@@ -111,11 +111,13 @@ pub fn fire_memory_stream(
     app: &mut App,
     llm_client: &Arc<LlmClient>,
     engram_client: &Arc<EngramClient>,
+    embed_provider: &Option<Arc<dyn AsyncEmbeddingProvider>>,
     user_msg: &str,
 ) {
     let history = app.conversation.build_api_messages();
     let client = llm_client.clone();
     let engram = engram_client.clone();
+    let embed = embed_provider.clone();
     let model = app.config.llm.model_name.clone();
     let temp = app.config.llm.temperature_casual;
     let user_msg = user_msg.to_string();
@@ -128,7 +130,17 @@ pub fn fire_memory_stream(
             Ok(results) if !results.is_empty() => {
                 format!("\n\n[Memory context]\n{}", results.join("\n"))
             }
-            _ => String::new(),
+            _ => {
+                // Engram search empty -- try embedding for semantic marker
+                if let Some(ref provider) = embed {
+                    match provider.embed(&user_msg).await {
+                        Ok(vec) => format!("\n\n[Embedded query: {} dims via {}]", vec.len(), provider.name()),
+                        Err(_) => String::new(),
+                    }
+                } else {
+                    String::new()
+                }
+            }
         };
 
         // Inject context into user message

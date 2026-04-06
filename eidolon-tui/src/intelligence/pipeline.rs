@@ -73,7 +73,7 @@ impl Pipeline {
         decision: &RoutingDecision,
         agents_config: &AgentsConfig,
         engram_client: &Option<Arc<EngramClient>>,
-        _embed_provider: &Option<Arc<dyn AsyncEmbeddingProvider>>,
+        embed_provider: &Option<Arc<dyn AsyncEmbeddingProvider>>,
     ) -> PipelineResult {
         // Step 1: Compress context
         let compression = self.compressor.compress(history, user_msg).await;
@@ -87,6 +87,13 @@ impl Pipeline {
             }
         } else {
             String::new()
+        };
+
+        // Step 2b: Generate query embedding if provider available
+        let _query_embedding = if let Some(ref provider) = embed_provider {
+            provider.embed(user_msg).await.ok()
+        } else {
+            None
         };
 
         // Step 3: Distill prompt

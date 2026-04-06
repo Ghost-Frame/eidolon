@@ -391,6 +391,7 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                             &mut app,
                                             &llm_client,
                                             engram,
+                                            &embed_provider,
                                             &user_msg,
                                         );
                                     } else {
@@ -627,6 +628,21 @@ pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                         let _ = tx.send(result);
                     });
                 }
+                // Auto-store to Engram if configured
+                if app.config.session.auto_store_to_engram {
+                    if let Some(ref engram) = engram_client {
+                        let user_msg = app.pending_user_message.clone();
+                        let response = app.pending_response.clone();
+                        if !user_msg.is_empty() && !response.is_empty() {
+                            let engram = engram.clone();
+                            tokio::spawn(async move {
+                                let content = format!("Q: {}\nA: {}", user_msg, response);
+                                let _ = engram.store(&content, "eidolon-tui", "conversation").await;
+                            });
+                        }
+                    }
+                }
+
                 app.commit_pending_response();
             }
         }
