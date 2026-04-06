@@ -51,30 +51,18 @@ pub async fn brain_query(
 
     tracing::info!("brain_query: user={} query_len={}", user.0, req.query.len());
 
-    // Call Engram /embed to get embedding vector
-    let embedding: Vec<f32> = match crate::embed_text(
-        &state.http_client,
-        &state.config.engram.url,
-        state.config.engram.api_key.as_deref(),
-        &req.query,
-    ).await {
+    // Get embedding vector from configured provider
+    let embedding: Vec<f32> = match state.embed_text(&req.query).await {
         Some(v) if !v.is_empty() => v,
         _ => {
-            tracing::warn!("Engram /embed unavailable for brain_query, returning empty result");
+            tracing::warn!("embedding unavailable for brain_query, returning empty result");
             return Ok(Json(json!({
                 "ok": true,
-                "note": "Engram embed unavailable",
+                "note": "embedding provider unavailable",
                 "result": null,
             })));
         }
     };
-
-    if embedding.is_empty() {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Engram returned empty embedding"})),
-        ));
-    }
 
     let top_k = req.top_k.unwrap_or(10);
     let beta = req.beta.unwrap_or(8.0);

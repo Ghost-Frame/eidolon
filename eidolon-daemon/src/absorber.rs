@@ -15,19 +15,14 @@ fn store_request(state: &Arc<AppState>, url: &str, body: serde_json::Value) -> r
 }
 
 /// Absorb a memory directly into the in-process brain.
-/// Gets embedding from Engram /embed, constructs BrainMemory, calls Brain::absorb_new().
+/// Gets embedding from configured provider, constructs BrainMemory, calls Brain::absorb_new().
 pub async fn absorb_to_brain(
     state: &Arc<AppState>,
     content: &str,
     category: &str,
     importance: i32,
 ) {
-    let embedding = match crate::embed_text(
-        &state.http_client,
-        &state.config.engram.url,
-        state.config.engram.api_key.as_deref(),
-        content,
-    ).await {
+    let embedding = match state.embed_text(content).await {
         Some(e) if !e.is_empty() => e,
         _ => {
             tracing::warn!("absorber: embed failed, skipping brain absorption");
@@ -108,26 +103,28 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
     // 1. Absorb session summary into brain
     absorb_to_brain(&state, &summary, "task", importance).await;
 
-    // 2. Also store to Engram for cross-agent visibility
-    let store_url = format!("{}/store", state.config.engram.url);
-    let store_result = store_request(&state, &store_url, json!({
-            "content": summary,
-            "category": "task",
-            "source": "eidolon-daemon",
-            "importance": importance,
-        }))
-        .send()
-        .await;
+    // 2. Also store to Engram for cross-agent visibility (only when Engram is the provider)
+    if state.engram_enabled() {
+        let store_url = format!("{}/store", state.config.engram.url);
+        let store_result = store_request(&state, &store_url, json!({
+                "content": summary,
+                "category": "task",
+                "source": "eidolon-daemon",
+                "importance": importance,
+            }))
+            .send()
+            .await;
 
-    match store_result {
-        Ok(resp) if resp.status().is_success() => {
-            tracing::info!("absorber: stored session summary for {}", short_id);
-        }
-        Ok(resp) => {
-            tracing::warn!("absorber: Engram store returned {}", resp.status());
-        }
-        Err(e) => {
-            tracing::warn!("absorber: Engram store failed: {}", e);
+        match store_result {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("absorber: stored session summary for {}", short_id);
+            }
+            Ok(resp) => {
+                tracing::warn!("absorber: Engram store returned {}", resp.status());
+            }
+            Err(e) => {
+                tracing::warn!("absorber: Engram store failed: {}", e);
+            }
         }
     }
 
@@ -150,15 +147,18 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
         // Absorb blocks with high importance - these are correction signals
         absorb_to_brain(&state, &block_content, "issue", 8).await;
 
-        // Also to Engram
-        let _ = store_request(&state, &store_url, json!({
-                "content": block_content,
-                "category": "issue",
-                "source": "eidolon-daemon",
-                "importance": 8,
-            }))
-            .send()
-            .await;
+        // Also to Engram (if enabled)
+        if state.engram_enabled() {
+            let store_url = format!("{}/store", state.config.engram.url);
+            let _ = store_request(&state, &store_url, json!({
+                    "content": block_content,
+                    "category": "issue",
+                    "source": "eidolon-daemon",
+                    "importance": 8,
+                }))
+                .send()
+                .await;
+        }
     }
 
     // 4. Extract and absorb key discoveries
@@ -188,14 +188,17 @@ pub async fn absorb_session(state: Arc<AppState>, session_id: String) {
         };
         absorb_to_brain(&state, &discovery_content, "discovery", 5).await;
 
-        let _ = store_request(&state, &store_url, json!({
-                "content": discovery_content,
-                "category": "discovery",
-                "source": "eidolon-daemon",
-                "importance": 5,
-            }))
-            .send()
-            .await;
+        if state.engram_enabled() {
+            let store_url = format!("{}/store", state.config.engram.url);
+            let _ = store_request(&state, &store_url, json!({
+                    "content": discovery_content,
+                    "category": "discovery",
+                    "source": "eidolon-daemon",
+                    "importance": 5,
+                }))
+                .send()
+                .await;
+        }
         tracing::info!("absorber: absorbed {} discovery lines for session {}", discovery_lines.len(), short_id);
     }
 

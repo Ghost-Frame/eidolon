@@ -291,6 +291,39 @@ struct RawApiKeyEntry {
     agent_allowlist: Option<Vec<String>>,
 }
 
+/// Embedding provider configuration.
+/// Default: Engram (uses the [engram] section's URL and API key).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "provider", rename_all = "lowercase")]
+pub enum EmbeddingConfig {
+    Engram {
+        #[serde(default = "default_embed_dim")]
+        dim: usize,
+    },
+    Openai {
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default = "default_openai_dim")]
+        dim: usize,
+    },
+    Http {
+        url: String,
+        #[serde(default = "default_embed_dim")]
+        dim: usize,
+        #[serde(default)]
+        auth_header: Option<String>,
+    },
+}
+
+fn default_embed_dim() -> usize { 1024 }
+fn default_openai_dim() -> usize { 1536 }
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        EmbeddingConfig::Engram { dim: 1024 }
+    }
+}
+
 fn default_home() -> String {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -325,6 +358,8 @@ pub struct Config {
     pub audit: Option<AuditConfig>,
     #[serde(default)]
     pub growth: GrowthConfig,
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
 }
 
 impl Default for Config {
@@ -345,6 +380,7 @@ impl Default for Config {
             rate_limit: None,
             audit: None,
             growth: GrowthConfig::default(),
+            embedding: EmbeddingConfig::default(),
         }
     }
 }
@@ -377,6 +413,8 @@ struct RawConfig {
     audit: Option<AuditConfig>,
     #[serde(default)]
     growth: GrowthConfig,
+    #[serde(default)]
+    embedding: EmbeddingConfig,
 }
 
 impl Config {
@@ -458,6 +496,7 @@ impl Config {
             rate_limit: raw.rate_limit,
             audit: raw.audit,
             growth: raw.growth,
+            embedding: raw.embedding,
         })
     }
 

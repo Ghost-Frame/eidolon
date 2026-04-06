@@ -42,19 +42,14 @@ fn scrub_credentials(text: &str) -> String {
 }
 
 /// Query the in-process brain for task-relevant context.
-/// Embeds the query text via Engram /embed, then runs Brain::query()
+/// Embeds the query text via configured provider, then runs Brain::query()
 /// for pattern completion with contradiction resolution.
 async fn query_brain(
     state: &Arc<AppState>,
     query: &str,
     top_k: usize,
 ) -> (Vec<MemorySummary>, Vec<ContradictionInfo>) {
-    let embedding = match crate::embed_text(
-        &state.http_client,
-        &state.config.engram.url,
-        state.config.engram.api_key.as_deref(),
-        query,
-    ).await {
+    let embedding = match state.embed_text(query).await {
         Some(e) if !e.is_empty() => e,
         _ => {
             tracing::warn!("brain query: embed failed for prompt query");

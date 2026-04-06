@@ -22,12 +22,7 @@ async fn brain_validate_action(
     }
 
     let query_text = format!("{} command: {}", tool_name, command);
-    let embedding = crate::embed_text(
-        &state.http_client,
-        &state.config.engram.url,
-        state.config.engram.api_key.as_deref(),
-        &query_text,
-    ).await?;
+    let embedding = state.embed_text(&query_text).await?;
 
     if embedding.is_empty() {
         return None;
@@ -706,12 +701,7 @@ async fn check_ssh_command(command: &str, state: &AppState) -> Option<(Value, Ve
     // Unknown host: query brain for context
     let query_text = format!("server {} ssh configuration", host);
 
-    if let Some(embedding) = crate::embed_text(
-        &state.http_client,
-        &state.config.engram.url,
-        state.config.engram.api_key.as_deref(),
-        &query_text,
-    ).await {
+    if let Some(embedding) = state.embed_text(&query_text).await {
         if !embedding.is_empty() {
             let mut brain = state.brain.lock().await;
             let result = brain.query(&embedding, 5, 8.0, 2);
@@ -745,12 +735,7 @@ async fn check_systemctl_command(command: &str, state: &AppState) -> Option<(Val
 
     let query_text = format!("systemctl {} {} restart order dependencies", action, service);
 
-    if let Some(embedding) = crate::embed_text(
-        &state.http_client,
-        &state.config.engram.url,
-        state.config.engram.api_key.as_deref(),
-        &query_text,
-    ).await {
+    if let Some(embedding) = state.embed_text(&query_text).await {
         if !embedding.is_empty() {
             let mut brain = state.brain.lock().await;
             let result = brain.query(&embedding, 5, 8.0, 2);

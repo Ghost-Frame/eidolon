@@ -8,11 +8,54 @@ use eidolon_daemon::session::SessionManager;
 use eidolon_lib::brain::Brain;
 use eidolon_lib::growth;
 use eidolon_lib::instincts;
+use eidolon_daemon::config::EmbeddingConfig;
+use eidolon_daemon::embedding::{self, AsyncEmbeddingProvider};
+
+/// Build the embedding provider based on config.
+fn build_embed_provider(
+    config: &Config,
+    http: &reqwest::Client,
+) -> Arc<dyn AsyncEmbeddingProvider> {
+    match &config.embedding {
+        EmbeddingConfig::Engram { dim } => {
+            tracing::info!("embedding provider: engram (dim={})", dim);
+            Arc::new(embedding::engram::EngramProvider::new(
+                http.clone(),
+                config.engram.url.clone(),
+                config.engram.api_key.clone(),
+                *dim,
+            ))
+        }
+        EmbeddingConfig::Openai { model, dim } => {
+            let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| {
+                eprintln!("[eidolon-daemon] OPENAI_API_KEY required for openai embedding provider");
+                std::process::exit(1);
+            });
+            tracing::info!("embedding provider: openai (model={}, dim={})",
+                model.as_deref().unwrap_or("text-embedding-3-small"), dim);
+            Arc::new(embedding::openai::OpenaiProvider::new(
+                http.clone(),
+                api_key,
+                model.clone(),
+                *dim,
+            ))
+        }
+        EmbeddingConfig::Http { url, dim, auth_header } => {
+            tracing::info!("embedding provider: http (url={}, dim={})", url, dim);
+            Arc::new(embedding::http::HttpProvider::new(
+                http.clone(),
+                url.clone(),
+                *dim,
+                auth_header.clone(),
+            ))
+        }
+    }
+}
 
 /// Enrich ghost instinct embeddings with real BGE-large vectors from Engram.
 /// One-time migration: after first successful run, instincts.bin is version 2.
 async fn enrich_instincts_if_needed(
-    http_client: &reqwest::Client,
+    provider: &dyn AsyncEmbeddingProvider,
     config: &Config,
 ) {
     let instincts_path = format!("{}/instincts.bin", config.brain.data_dir);
@@ -30,22 +73,21 @@ async fn enrich_instincts_if_needed(
     }
 
     tracing::info!(
-        "enriching {} ghost instincts with real embeddings from Engram",
-        corpus.memories.len()
+        "enriching {} ghost instincts with real embeddings via {} provider",
+        corpus.memories.len(),
+        provider.name(),
     );
 
-    let engram_url = &config.engram.url;
-    let engram_key = config.engram.api_key.as_deref();
     let mut enriched = 0usize;
     let mut failed = 0usize;
 
     for memory in &mut corpus.memories {
-        match embed_text(http_client, engram_url, engram_key, &memory.content).await {
-            Some(embedding) => {
+        match provider.embed(&memory.content).await {
+            Ok(embedding) => {
                 memory.embedding = embedding;
                 enriched += 1;
             }
-            None => {
+            Err(_) => {
                 failed += 1;
             }
         }
@@ -66,7 +108,7 @@ async fn enrich_instincts_if_needed(
         }
     } else {
         tracing::warn!(
-            "Engram unreachable -- all {} enrichment attempts failed, keeping sine-wave embeddings",
+            "embedding provider unreachable -- all {} enrichment attempts failed, keeping sine-wave embeddings",
             failed
         );
     }
@@ -125,8 +167,11 @@ async fn main() {
     tracing::info!("engram url: {}", config.engram.url);
     tracing::info!("auth: {} API key(s) configured", config.auth.api_keys.len());
 
+    // Build embedding provider
+    let embed_provider = build_embed_provider(&config, &http_client);
+
     // Enrich ghost instinct embeddings with real vectors (one-time migration)
-    enrich_instincts_if_needed(&http_client, &config).await;
+    enrich_instincts_if_needed(embed_provider.as_ref(), &config).await;
 
     // Init brain
     let mut brain = Brain::new();
@@ -174,6 +219,7 @@ async fn main() {
         sessions: Arc::new(Mutex::new(session_manager)),
         http_client,
         config,
+        embed_provider,
         scrub_registry: Arc::new(Mutex::new(ScrubRegistry::new())),
         rate_limiter,
         audit_log,

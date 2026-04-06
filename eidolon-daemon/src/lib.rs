@@ -2,6 +2,7 @@ pub mod absorber;
 pub mod agents;
 pub mod audit;
 pub mod config;
+pub mod embedding;
 pub mod prompt;
 pub mod rate_limit;
 pub mod routes;
@@ -28,29 +29,26 @@ pub struct AppState {
     pub sessions: Arc<Mutex<SessionManager>>,
     pub config: Config,
     pub http_client: reqwest::Client,
+    pub embed_provider: Arc<dyn embedding::AsyncEmbeddingProvider>,
     pub scrub_registry: Arc<Mutex<ScrubRegistry>>,
     pub rate_limiter: Option<Arc<rate_limit::RateLimiter>>,
     pub audit_log: Option<Arc<audit::AuditLog>>,
 }
 
-/// Get a 1024-dim embedding from Engram's /embed endpoint.
-pub async fn embed_text(
-    http: &reqwest::Client,
-    engram_url: &str,
-    engram_key: Option<&str>,
-    text: &str,
-) -> Option<Vec<f32>> {
-    let url = format!("{}/embed", engram_url);
-    let mut req = http
-        .post(&url)
-        .json(&serde_json::json!({"text": text}));
-    if let Some(key) = engram_key {
-        req = req.header("Authorization", format!("Bearer {}", key));
+impl AppState {
+    /// Embed text using the configured provider. Returns None on failure.
+    pub async fn embed_text(&self, text: &str) -> Option<Vec<f32>> {
+        match self.embed_provider.embed(text).await {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("embed_text failed: {}", e);
+                None
+            }
+        }
     }
-    let resp = req.send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
+
+    /// Check if the configured embedding provider is Engram.
+    pub fn engram_enabled(&self) -> bool {
+        self.embed_provider.name() == "engram"
     }
-    let body: serde_json::Value = resp.json().await.ok()?;
-    serde_json::from_value(body["embedding"].clone()).ok()
 }

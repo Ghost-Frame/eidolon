@@ -17,6 +17,7 @@ reasoning = ["eidolon-lib/reasoning"]
 
 [dependencies]
 eidolon-lib = { path = "../eidolon-lib" }
+async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
