@@ -47,6 +47,36 @@ pub async fn submit_task(
         ));
     }
 
+    // Enforce concurrency limits
+    {
+        let sessions = state.sessions.lock().await;
+        let user_active = sessions.list_active(&user.0).len();
+        if user_active >= state.config.safety.max_concurrent_per_user {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({
+                    "error": format!(
+                        "concurrent session limit reached ({}/{})",
+                        user_active, state.config.safety.max_concurrent_per_user
+                    )
+                })),
+            ));
+        }
+
+        let global_active = sessions.count_active_global();
+        if global_active >= state.config.safety.max_concurrent_global {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({
+                    "error": format!(
+                        "global concurrent session limit reached ({}/{})",
+                        global_active, state.config.safety.max_concurrent_global
+                    )
+                })),
+            ));
+        }
+    }
+
     let model = req.model.clone().unwrap_or_else(|| {
         state.config.agents.get(&agent_name)
             .map(|a| a.default_model.clone())

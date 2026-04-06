@@ -308,6 +308,12 @@ impl SessionManager {
             .collect()
     }
 
+    pub fn count_active_global(&self) -> usize {
+        self.sessions.values()
+            .filter(|s| s.status == SessionStatus::Running || s.status == SessionStatus::Pending)
+            .count()
+    }
+
     pub fn list_all(&self, user: &str) -> Vec<serde_json::Value> {
         // In-memory sessions for this user
         let mut all: Vec<_> = self.sessions.values()

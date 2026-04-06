@@ -181,6 +181,10 @@ pub struct SafetyConfig {
     pub gate_fail_mode: String,
     #[serde(default)]
     pub cors_origins: Vec<String>,
+    #[serde(default = "default_max_concurrent_per_user")]
+    pub max_concurrent_per_user: usize,
+    #[serde(default = "default_max_concurrent_global")]
+    pub max_concurrent_global: usize,
 }
 
 impl Default for SafetyConfig {
@@ -191,6 +195,8 @@ impl Default for SafetyConfig {
             bypass_permissions: false,
             gate_fail_mode: default_gate_fail_mode(),
             cors_origins: Vec::new(),
+            max_concurrent_per_user: default_max_concurrent_per_user(),
+            max_concurrent_global: default_max_concurrent_global(),
         }
     }
 }
@@ -198,6 +204,9 @@ impl Default for SafetyConfig {
 fn default_gate_fail_mode() -> String {
     "closed".to_string()
 }
+
+fn default_max_concurrent_per_user() -> usize { 3 }
+fn default_max_concurrent_global() -> usize { 10 }
 
 // --- Multi-user auth ---
 
