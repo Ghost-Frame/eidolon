@@ -96,7 +96,7 @@ Claude Code (or any Anthropic API client)
 
 **Guardian Daemon** (`eidolon-daemon`): Persistent service at `:7700`. Transparent API proxy for Claude Code, action gate, activity fan-out, prompt generation, growth reflection. The proxy intercepts Anthropic API traffic to capture memories and inject recall context without any agent-side configuration.
 
-**Terminal UI** (`eidolon-tui`): Interactive TUI with a local LLM sidecar (llama-server on GPU). Agent spawning, gate checks, brain queries, and session management go through the daemon. Not required. The proxy handles integration for Claude Code sessions automatically.
+**Terminal UI** (`eidolon-tui`): WIP. Interactive TUI with a local LLM sidecar (llama-server on GPU). See [Terminal UI](#terminal-ui-wip) below.
 
 **CLI** (`eidolon-cli`): Submit tasks and query status from the command line.
 
@@ -192,6 +192,24 @@ Other services in the ecosystem can use the same endpoints to reflect on their o
 enabled = true
 reflection_chance = 0.20
 ```
+
+---
+
+## Terminal UI (WIP)
+
+A Ratatui terminal interface that pairs a local LLM with the Eidolon daemon. Runs on Windows with a GPU-accelerated llama-server sidecar for fast local inference. The daemon provides brain queries, gate checks, and session management over HTTP and WebSocket.
+
+Current state:
+
+- Split-panel layout with local LLM chat on the left and a Claude session panel on the right
+- Claude sessions stream output through the daemon's WebSocket endpoint
+- Gate approval flow surfaces permission requests inline and lets you approve or deny from the TUI
+- Stream-json output from Claude gets parsed into readable display lines
+- Word-wrap-aware scrolling with a scrollbar that tracks actual row positions
+- Growth reflections fire after each exchange
+- Conversation exchanges auto-store to Engram
+
+What remains: stability, connection resilience, and making it feel like a real daily-driver terminal rather than a prototype. The proxy handles Claude Code integration today. The TUI is the planned complement for direct interactive sessions where you want both a local model and the daemon's brain in the same interface.
 
 ---
 
