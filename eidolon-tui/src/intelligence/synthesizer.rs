@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use serde::Deserialize;
 use crate::llm::client::LlmClient;
-use crate::llm::grammar::synthesis_grammar;
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -172,7 +171,6 @@ impl Synthesizer {
              {clean}"
         );
 
-        let grammar = synthesis_grammar();
         let messages: &[(&str, &str)] = &[
             ("system", system_prompt),
             ("user", &user_prompt),
@@ -182,7 +180,7 @@ impl Synthesizer {
             &self.model_name,
             messages,
             0.1,
-            Some(&grammar),
+            None,
         );
 
         let response = match self.client.complete(&request).await {

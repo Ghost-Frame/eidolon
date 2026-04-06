@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use serde::Deserialize;
 use crate::llm::client::LlmClient;
-use crate::llm::grammar::distillation_grammar;
 
 /// Structured task specification produced by distilling user intent.
 #[derive(Debug, Clone, Deserialize)]
@@ -95,7 +94,9 @@ impl Distiller {
         let system = "You are a prompt distiller. Convert the user's message into a structured task specification. \
             Extract the core objective, constraints, relevant context, and expected output. \
             Be precise and technical. Drop filler words and ambiguity. \
-            Output valid JSON matching the required schema.";
+            Respond with ONLY a JSON object, no other text.\n\n\
+            Required JSON format:\n\
+            {\"objective\": \"clear task description\", \"constraints\": [\"list of constraints\"], \"context\": \"relevant background\", \"expected_output\": \"what the result should look like\"}";
 
         let mut user_prompt = format!("User message: {}", user_msg);
         if !compressed_context.is_empty() {
@@ -105,15 +106,14 @@ impl Distiller {
             user_prompt.push_str(&format!("\n\nMemory context:\n{}", engram_context));
         }
 
-        let grammar = distillation_grammar();
         let msgs: &[(&str, &str)] = &[
             ("system", system),
             ("user", &user_prompt),
         ];
         let mut request = LlmClient::build_request_with_model(
-            &self.model_name, msgs, 0.3, Some(&grammar),
+            &self.model_name, msgs, 0.3, None,
         );
-        request.max_tokens = Some(400);
+        request.max_tokens = Some(1024);
 
         let resp = tokio::time::timeout(
             std::time::Duration::from_secs(30),

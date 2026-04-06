@@ -2,6 +2,7 @@ use crate::app::App;
 use crate::llm::client::LlmClient;
 use crate::syntheos::engram::EngramClient;
 use crate::conversation::router::RoutingDecision;
+use crate::daemon::client::DaemonClient;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
@@ -65,6 +66,42 @@ pub fn fire_casual_stream(
         let _ = client.stream_complete(&request, tx).await;
     });
     app.stream_abort = Some(handle.abort_handle());
+}
+
+/// Dispatch a task to Claude via the daemon, returning a receiver for output lines.
+pub fn dispatch_to_claude(
+    task: &str,
+    agent: &str,
+    model: &str,
+    daemon: &Arc<DaemonClient>,
+) -> mpsc::UnboundedReceiver<String> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let daemon = Arc::clone(daemon);
+    let task = task.to_string();
+    let agent = agent.to_string();
+    let model = model.to_string();
+
+    tokio::spawn(async move {
+        // Try to enrich task via daemon prompt generation
+        let final_task = match daemon.generate_prompt(&task, &agent).await {
+            Ok(enriched) => enriched,
+            Err(_) => task,
+        };
+
+        match daemon.submit_task(&final_task, &agent, &model).await {
+            Ok(session) => {
+                let _ = tx.send(format!("[Session {} started]", session.session_id));
+                if let Err(e) = daemon.stream_session(&session.session_id, tx.clone()).await {
+                    let _ = tx.send(format!("[Stream error: {}]", e));
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(format!("[Daemon error: {}]", e));
+            }
+        }
+    });
+
+    rx
 }
 
 /// Fire a memory-augmented stream: search Engram for context, inject into conversation.

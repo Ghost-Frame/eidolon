@@ -148,6 +148,22 @@ impl DaemonClient {
         Ok(())
     }
 
+    /// Send input to an active session (for interactive Claude conversations).
+    pub async fn send_input(&self, session_id: &str, input: &str) -> Result<(), String> {
+        let url = format!("{}/task/{}/input", self.base_url, session_id);
+        let resp = self.http.post(&url)
+            .header("Authorization", self.auth_header())
+            .json(&json!({ "input": input }))
+            .send()
+            .await
+            .map_err(|e| format!("Send input failed: {}", e))?;
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Input rejected: {}", body));
+        }
+        Ok(())
+    }
+
     /// Gate check via daemon. Returns the daemon's gate response.
     pub async fn gate_check(&self, tool_name: &str, command: &str, session_id: &str) -> Result<Value, String> {
         let url = format!("{}/gate/check", self.base_url);

@@ -6,6 +6,7 @@ use eidolon_daemon::config::Config;
 use eidolon_daemon::scrubbing::ScrubRegistry;
 use eidolon_daemon::session::SessionManager;
 use eidolon_lib::brain::Brain;
+use eidolon_lib::growth;
 
 #[tokio::main]
 async fn main() {
@@ -121,7 +122,7 @@ async fn main() {
                 interval.tick().await;
                 loop {
                     interval.tick().await;
-                    {
+                    let (dream_result, pattern_count, edge_count) = {
                         let mut brain_guard = state_dream.brain.lock().await;
                         let result = brain_guard.run_dream_cycle();
                         tracing::info!(
@@ -135,6 +136,46 @@ async fn main() {
                         {
                             let gen = brain_guard.evolution_train();
                             tracing::info!("evolution: trained to generation {}", gen);
+                        }
+
+                        let stats = brain_guard.get_stats();
+                        let pc = stats.total_patterns;
+                        let ec = stats.total_edges;
+                        (result, pc, ec)
+                    };
+
+                    // Growth reflection after dream cycle (probabilistic)
+                    if growth::should_reflect(&state_dream.config.growth) {
+                        let dr = &dream_result;
+                        let context = growth::build_dream_context(
+                            dr.replayed, dr.merged, dr.pruned_patterns, dr.pruned_edges,
+                            dr.discovered, dr.decorrelated, dr.resolved, dr.cycle_time_ms,
+                            pattern_count, edge_count,
+                        );
+
+                        match growth::reflect(
+                            &state_dream.http_client,
+                            &state_dream.config.growth,
+                            "eidolon",
+                            &context,
+                            None,
+                            None,
+                        ).await {
+                            Ok(Some(obs)) => {
+                                tracing::info!(observation = %obs, "growth: dream reflection recorded");
+                                let activity = serde_json::json!({
+                                    "agent": "eidolon-daemon",
+                                    "action": "growth.observed",
+                                    "summary": obs,
+                                });
+                                let _ = state_dream.http_client
+                                    .post(format!("http://127.0.0.1:{}/activity", state_dream.config.server.port))
+                                    .bearer_auth(state_dream.config.auth.api_keys.first().map(|k| k.key.as_str()).unwrap_or(""))
+                                    .json(&activity)
+                                    .send().await;
+                            }
+                            Ok(None) => {}
+                            Err(e) => tracing::warn!(error = %e, "growth: dream reflection failed"),
                         }
                     }
 

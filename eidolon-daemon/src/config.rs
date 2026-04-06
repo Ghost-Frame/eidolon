@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use eidolon_lib::growth::GrowthConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
@@ -322,6 +323,8 @@ pub struct Config {
     pub rate_limit: Option<RateLimitConfig>,
     #[serde(default)]
     pub audit: Option<AuditConfig>,
+    #[serde(default)]
+    pub growth: GrowthConfig,
 }
 
 impl Default for Config {
@@ -341,6 +344,7 @@ impl Default for Config {
             sessions: SessionsConfig::default(),
             rate_limit: None,
             audit: None,
+            growth: GrowthConfig::default(),
         }
     }
 }
@@ -371,6 +375,8 @@ struct RawConfig {
     rate_limit: Option<RateLimitConfig>,
     #[serde(default)]
     audit: Option<AuditConfig>,
+    #[serde(default)]
+    growth: GrowthConfig,
 }
 
 impl Config {
@@ -451,6 +457,7 @@ impl Config {
             sessions: raw.sessions,
             rate_limit: raw.rate_limit,
             audit: raw.audit,
+            growth: raw.growth,
         })
     }
 

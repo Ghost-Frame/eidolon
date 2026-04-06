@@ -14,3 +14,4 @@ pub mod evolution;
 pub mod reasoning;
 pub mod instincts;
 pub mod brain;
+pub mod growth;

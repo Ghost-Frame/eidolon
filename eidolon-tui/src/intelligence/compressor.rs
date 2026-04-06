@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use crate::llm::client::LlmClient;
-use crate::llm::grammar::compression_grammar;
 
 /// Cached summary of older conversation history.
 #[derive(Debug, Clone)]
@@ -132,15 +131,14 @@ impl Compressor {
             current_task, old_text
         );
 
-        let grammar = compression_grammar();
         let msgs: &[(&str, &str)] = &[
             ("system", system),
             ("user", &user_prompt),
         ];
         let mut request = LlmClient::build_request_with_model(
-            &self.model_name, msgs, 0.3, Some(&grammar),
+            &self.model_name, msgs, 0.3, None,
         );
-        request.max_tokens = Some(512);
+        request.max_tokens = Some(1024);
 
         let resp = tokio::time::timeout(
             std::time::Duration::from_secs(30),

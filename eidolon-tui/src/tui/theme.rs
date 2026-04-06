@@ -20,6 +20,8 @@ pub struct Theme {
     pub agent_border: Color,
     pub pulse_start: Color,
     pub pulse_end: Color,
+    pub claude_border: Color,
+    pub claude_text: Color,
 }
 
 pub const THEMES: &[Theme] = &[
@@ -42,6 +44,8 @@ pub const THEMES: &[Theme] = &[
         agent_border: Color::Rgb(124, 58, 237),
         pulse_start: Color::Rgb(124, 58, 237),
         pulse_end: Color::Rgb(75, 85, 99),
+        claude_border: Color::Rgb(59, 130, 246),
+        claude_text: Color::Rgb(147, 197, 253),
     },
     Theme {
         name: "limitless",
@@ -62,6 +66,8 @@ pub const THEMES: &[Theme] = &[
         agent_border: Color::Rgb(56, 189, 248),
         pulse_start: Color::Rgb(56, 189, 248),
         pulse_end: Color::Rgb(15, 23, 42),
+        claude_border: Color::Rgb(59, 130, 246),
+        claude_text: Color::Rgb(147, 197, 253),
     },
     Theme {
         name: "cyberpunk",
@@ -82,6 +88,8 @@ pub const THEMES: &[Theme] = &[
         agent_border: Color::Rgb(180, 77, 255),
         pulse_start: Color::Rgb(0, 240, 255),
         pulse_end: Color::Rgb(180, 77, 255),
+        claude_border: Color::Rgb(59, 130, 246),
+        claude_text: Color::Rgb(147, 197, 253),
     },
     Theme {
         name: "hollow",
@@ -102,6 +110,8 @@ pub const THEMES: &[Theme] = &[
         agent_border: Color::Rgb(255, 51, 68),
         pulse_start: Color::Rgb(255, 51, 68),
         pulse_end: Color::Rgb(82, 82, 82),
+        claude_border: Color::Rgb(59, 130, 246),
+        claude_text: Color::Rgb(147, 197, 253),
     },
     Theme {
         name: "synapse",
@@ -122,6 +132,8 @@ pub const THEMES: &[Theme] = &[
         agent_border: Color::Rgb(255, 170, 0),
         pulse_start: Color::Rgb(255, 170, 0),
         pulse_end: Color::Rgb(100, 100, 90),
+        claude_border: Color::Rgb(59, 130, 246),
+        claude_text: Color::Rgb(147, 197, 253),
     },
     Theme {
         name: "tokyo",
@@ -142,6 +154,8 @@ pub const THEMES: &[Theme] = &[
         agent_border: Color::Rgb(122, 162, 247),
         pulse_start: Color::Rgb(122, 162, 247),
         pulse_end: Color::Rgb(68, 75, 106),
+        claude_border: Color::Rgb(59, 130, 246),
+        claude_text: Color::Rgb(147, 197, 253),
     },
     Theme {
         name: "minimal",
@@ -162,6 +176,8 @@ pub const THEMES: &[Theme] = &[
         agent_border: Color::Rgb(136, 136, 136),
         pulse_start: Color::Rgb(136, 136, 136),
         pulse_end: Color::Rgb(68, 68, 68),
+        claude_border: Color::Rgb(59, 130, 246),
+        claude_text: Color::Rgb(147, 197, 253),
     },
 ];
 

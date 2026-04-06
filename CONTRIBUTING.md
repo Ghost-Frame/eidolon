@@ -30,7 +30,7 @@ eidolon-daemon/       Guardian daemon (HTTP API at :7700, gate, prompt generatio
   src/
     agents/           Agent registry and adapters (claude-code)
     prompt/           Living prompt generator and templates
-    routes/           HTTP routes (activity, gate, brain, sessions, tasks, audit)
+    routes/           HTTP routes (activity, gate, brain, sessions, tasks, audit, growth)
     absorber.rs       Session absorption back into brain
     session.rs        Session lifecycle management
   tests/              Security pentest suite (72 tests)
@@ -50,6 +50,8 @@ eidolon-cli/          CLI client for task submission and status queries
 
 5. **Session absorption.** When an agent session ends, the daemon absorbs learnings back into the brain as new activation patterns.
 
+6. **Growth system.** Post-dream reflection via Together.ai. After each dream cycle there is a configurable probability (default 20%) of calling `/growth/reflect`. Observations are stored in Engram under `category=growth` and injected into living prompts via `/growth/materialize`. The API key is loaded from credd (`together/api-key`) -- never from config.
+
 ## Testing
 
 The pentest suite covers gate bypass, command obfuscation, injection, auth, secrets, and SSRF:
@@ -67,6 +69,7 @@ cargo test --workspace
 | Auth edge cases | `eidolon-daemon/tests/pentest_auth.rs` |
 | Brain pattern completion | `eidolon-lib/` (needs coverage) |
 | Dreaming consolidation | `eidolon-lib/` (needs coverage) |
+| Growth reflection logic | `eidolon-lib/src/growth.rs` (needs coverage) |
 | TUI daemon integration | `eidolon-tui/` (needs coverage) |
 
 ## Code Style
@@ -90,6 +93,8 @@ cargo test --workspace
 - **Gate hardening**: The gate uses pattern matching which has known bypass gaps (base64 encoding, variable expansion). Shell-aware parsing would close these.
 - **Multi-agent orchestration**: The daemon currently supports Claude Code. Adapters for other agents (Cursor, OpenCode, Codex) need building.
 - **Instinct training data**: The `data/` directory contains pre-training instincts. More domain-specific instinct sets would help new deployments.
+- **Growth system tests**: `eidolon-lib/src/growth.rs` has no unit tests. Coverage for `validate_observation`, `should_reflect`, and `build_dream_context` would be straightforward to add.
+- **Growth prompt tuning**: Built-in system prompts in `get_system_prompt` cover `eidolon`, `claude-code`, `engram`, `chiasm`, and `thymus`. New service adapters need entries here.
 
 ## License
 

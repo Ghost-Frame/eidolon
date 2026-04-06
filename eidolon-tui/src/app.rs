@@ -9,6 +9,7 @@ use crate::conversation::manager::ConversationManager;
 use crate::intelligence::pipeline::PipelineResult;
 use crate::intelligence::synthesizer::SynthesizedResponse;
 use crate::dataset::collector::{DatasetCollector, TrainingExample};
+use ratatui::layout::Rect;
 use tokio::sync::{mpsc, oneshot};
 use std::path::PathBuf;
 
@@ -29,6 +30,54 @@ pub enum ServiceState {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputTarget {
+    Tui,
+    Claude,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClaudeSessionState {
+    Idle,
+    Starting,
+    Active { session_id: String, started_at: std::time::Instant },
+    Completed { session_id: String, exit_code: i32 },
+    Failed { error: String },
+}
+
+pub struct ClaudeSession {
+    pub state: ClaudeSessionState,
+    pub messages: Vec<String>,
+    pub scroll_offset: usize,
+    pub auto_scroll: bool,
+    pub model: String,
+    pub token_count: u32,
+    pub started_at: Option<std::time::Instant>,
+}
+
+impl ClaudeSession {
+    pub fn new() -> Self {
+        Self {
+            state: ClaudeSessionState::Idle,
+            messages: Vec::new(),
+            scroll_offset: 0,
+            auto_scroll: true,
+            model: String::new(),
+            token_count: 0,
+            started_at: None,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.messages.clear();
+        self.scroll_offset = 0;
+        self.auto_scroll = true;
+        self.token_count = 0;
+        self.started_at = None;
+        self.state = ClaudeSessionState::Idle;
+    }
+}
+
 pub struct App {
     pub config: Config,
     pub theme: &'static Theme,
@@ -38,10 +87,8 @@ pub struct App {
     pub input: String,
     pub cursor_pos: usize,
     pub conversation: ConversationManager,
-    pub scroll_offset: usize,
+    pub tui_scroll_offset: usize,
     pub show_raw_output: bool,
-    pub show_agent_panel: bool,
-    pub agent_outputs: std::collections::HashMap<String, Vec<String>>,
     pub context_tokens: u32,
     pub token_rx: Option<mpsc::UnboundedReceiver<String>>,
     pub pending_response: String,
@@ -60,6 +107,10 @@ pub struct App {
     pub pipeline_rx: Option<oneshot::Receiver<PipelineResult>>,
     pub pending_pipeline_result: Option<PipelineResult>,
 
+    // Daemon prompt generation result (replaces local pipeline when daemon is connected)
+    pub daemon_prompt_rx: Option<oneshot::Receiver<Result<String, String>>>,
+    pub pending_daemon_prompt: Option<String>,
+
     // Last synthesized response (for Ctrl+E raw output toggle)
     pub last_synthesized: Option<SynthesizedResponse>,
     // Pending synthesis result
@@ -69,6 +120,16 @@ pub struct App {
     pub system_msg_rx: mpsc::UnboundedReceiver<String>,
     // Pending daemon reconnect result
     pub daemon_reconnect_rx: Option<oneshot::Receiver<Result<DaemonClient, String>>>,
+
+    // Three-way call fields
+    pub input_target: InputTarget,
+    pub claude_session: ClaudeSession,
+    pub panel_split_percent: u16,
+    pub left_panel_rect: Rect,
+    pub right_panel_rect: Rect,
+    pub divider_col: u16,
+    pub dragging_divider: bool,
+    pub claude_output_rx: Option<mpsc::UnboundedReceiver<String>>,
 }
 
 impl App {
@@ -89,6 +150,8 @@ impl App {
         // Add initial greeting
         conversation.add_assistant_message("Yo. The strongest just came online. What do you need?");
 
+        let panel_split_percent = config.tui.panel_split;
+
         Self {
             config,
             theme,
@@ -98,10 +161,8 @@ impl App {
             input: String::new(),
             cursor_pos: 0,
             conversation,
-            scroll_offset: 0,
+            tui_scroll_offset: 0,
             show_raw_output: false,
-            show_agent_panel: false,
-            agent_outputs: std::collections::HashMap::new(),
             context_tokens: 0,
             token_rx: None,
             pending_response: String::new(),
@@ -115,10 +176,20 @@ impl App {
             collector,
             pipeline_rx: None,
             pending_pipeline_result: None,
+            daemon_prompt_rx: None,
+            pending_daemon_prompt: None,
             last_synthesized: None,
             synthesis_rx: None,
             system_msg_rx,
             daemon_reconnect_rx: None,
+            input_target: InputTarget::Tui,
+            claude_session: ClaudeSession::new(),
+            panel_split_percent,
+            left_panel_rect: Rect::default(),
+            right_panel_rect: Rect::default(),
+            divider_col: 0,
+            dragging_divider: false,
+            claude_output_rx: None,
         }
     }
 
@@ -172,20 +243,68 @@ impl App {
         self.conversation.display_messages()
     }
 
+    pub fn last_tui_assistant_message(&self) -> Option<String> {
+        self.display_messages()
+            .iter()
+            .rev()
+            .find(|m| !m.is_user)
+            .map(|m| m.content.clone())
+    }
+
+    pub fn last_claude_message(&self) -> Option<String> {
+        self.claude_session.messages.last().cloned()
+    }
+
     pub fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_add(3);
+        // Decreasing offset moves the viewport toward older (earlier) content
+        self.tui_scroll_offset = self.tui_scroll_offset.saturating_sub(3);
     }
 
     pub fn scroll_down(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(3);
+        // Increasing offset moves the viewport toward newer (later) content
+        self.tui_scroll_offset = self.tui_scroll_offset.saturating_add(3);
     }
 
     pub fn scroll_page_up(&mut self, page_height: usize) {
-        self.scroll_offset = self.scroll_offset.saturating_add(page_height);
+        self.tui_scroll_offset = self.tui_scroll_offset.saturating_sub(page_height);
     }
 
     pub fn scroll_page_down(&mut self, page_height: usize) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(page_height);
+        self.tui_scroll_offset = self.tui_scroll_offset.saturating_add(page_height);
+    }
+
+    pub fn start_claude_session(&mut self, session_id: String, model: String) {
+        self.claude_session.messages.clear();
+        self.claude_session.scroll_offset = 0;
+        self.claude_session.auto_scroll = true;
+        self.claude_session.model = model;
+        self.claude_session.token_count = 0;
+        let now = std::time::Instant::now();
+        self.claude_session.started_at = Some(now);
+        self.claude_session.state = ClaudeSessionState::Active {
+            session_id,
+            started_at: now,
+        };
+    }
+
+    pub fn claude_session_active(&self) -> bool {
+        matches!(self.claude_session.state, ClaudeSessionState::Active { .. })
+    }
+
+    pub fn toggle_input_target(&mut self) {
+        self.input_target = match self.input_target {
+            InputTarget::Tui => InputTarget::Claude,
+            InputTarget::Claude => InputTarget::Tui,
+        };
+    }
+
+    pub fn claude_scroll_up(&mut self) {
+        self.claude_session.scroll_offset = self.claude_session.scroll_offset.saturating_add(3);
+        self.claude_session.auto_scroll = false;
+    }
+
+    pub fn claude_scroll_down(&mut self) {
+        self.claude_session.scroll_offset = self.claude_session.scroll_offset.saturating_sub(3);
     }
 
     pub fn llm_status(&self) -> SidecarStatus {

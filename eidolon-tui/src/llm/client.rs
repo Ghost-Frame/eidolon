@@ -139,6 +139,12 @@ impl LlmClient {
             }
         };
 
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("HTTP {}: {}", status, body).into());
+        }
+
         let mut accumulated = String::new();
         let mut stream = response.bytes_stream();
 
@@ -196,13 +202,13 @@ impl LlmClient {
                 })
                 .collect(),
             temperature: Some(temperature),
-            max_tokens: Some(2048),
+            max_tokens: Some(4096),
             grammar: grammar.map(|g| g.to_string()),
             stream: false,
         }
     }
 
-    /// Build request with explicit model name (required for Ollama).
+    /// Build request with explicit model name.
     pub fn build_request_with_model(
         model: &str,
         messages: &[(&str, &str)],
