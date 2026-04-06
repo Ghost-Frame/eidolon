@@ -584,6 +584,72 @@ pub fn check_dangerous_patterns(command: &str, config: &Config) -> Option<String
         }
     }
 
+    // Variable indirection: assignment of dangerous commands to variables
+    // Catches: R="rm"; $R -rf / and CMD=rm; $CMD -rf /
+    {
+        let dangerous_cmds = ["rm", "mkfs", "dd", "shutdown", "reboot", "kill", "pkill"];
+        for cmd in &dangerous_cmds {
+            let patterns = [
+                format!("=\"{}\"", cmd),
+                format!("='{}'", cmd),
+                format!("={};", cmd),
+                format!("={} ", cmd),
+                format!("={}&", cmd),
+            ];
+            if patterns.iter().any(|p| cmd_lower.contains(p)) {
+                if cmd_lower.contains('$') {
+                    return Some(format!(
+                        "Shell variable indirection constructing '{}' command blocked",
+                        cmd
+                    ));
+                }
+            }
+        }
+
+        // Backtick command substitution targeting destructive commands
+        if cmd_lower.contains('`') {
+            let dangerous_cmds_bt = ["rm", "mkfs", "dd", "shutdown", "reboot"];
+            for cmd in &dangerous_cmds_bt {
+                if cmd_lower.contains(&format!("`echo {}`", cmd))
+                    || cmd_lower.contains(&format!("`printf {}`", cmd))
+                {
+                    return Some(format!(
+                        "Command substitution constructing '{}' blocked",
+                        cmd
+                    ));
+                }
+            }
+        }
+    }
+
+    // Extended interpreter coverage: node, deno, lua, php, etc.
+    {
+        let tokens: Vec<&str> = cmd_lower.split_whitespace().collect();
+        for (i, token) in tokens.iter().enumerate() {
+            let basename = token.rsplit('/').next().unwrap_or(token);
+
+            let is_extra_interpreter = matches!(basename,
+                "node" | "nodejs" | "deno" | "bun" |
+                "lua" | "luajit" |
+                "php" |
+                "tclsh" | "wish"
+            ) || basename.starts_with("lua5.") || basename.starts_with("php8.");
+
+            if is_extra_interpreter {
+                if let Some(flag) = tokens.get(i + 1) {
+                    if *flag == "-e" || *flag == "-r" || *flag == "eval"
+                        || *flag == "--eval" || *flag == "-c"
+                    {
+                        return Some(format!(
+                            "Inline code execution via {} {} blocked -- use a script file",
+                            token, flag
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     // Drop table / format destructors
     if cmd_lower.contains("drop table") {
         return Some("DROP TABLE statement requires manual confirmation".to_string());
