@@ -193,15 +193,21 @@ impl Synthesizer {
             None => return SynthesizedResponse::passthrough(raw_output),
         };
 
-        match serde_json::from_str::<LlmSynthesis>(content) {
-            Ok(parsed) => SynthesizedResponse {
+        let parsed_opt = serde_json::from_str::<LlmSynthesis>(content).ok()
+            .or_else(|| {
+                super::json_repair::extract_and_repair_json(content)
+                    .and_then(|v| serde_json::from_value::<LlmSynthesis>(v).ok())
+            });
+
+        match parsed_opt {
+            Some(parsed) => SynthesizedResponse {
                 summary: parsed.summary,
                 files_changed: parsed.files_changed,
                 key_actions: parsed.key_actions,
                 warnings: parsed.warnings,
                 raw_output: raw_output.to_string(),
             },
-            Err(_) => SynthesizedResponse::passthrough(raw_output),
+            None => SynthesizedResponse::passthrough(raw_output),
         }
     }
 }

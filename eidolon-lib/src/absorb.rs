@@ -10,6 +10,22 @@ pub const TEMPORAL_WINDOW_SECS: f64 = 86400.0;
 pub const MAX_EDGES_PER_MEMORY: usize = 15;
 pub const CONTRADICTION_SIM_THRESHOLD: f32 = 0.75;
 
+// Tiered causal keyword lists
+const STRONG_CAUSAL: &[&str] = &[
+    "caused by", "resulted in", "led to", "as a result",
+    "due to", "thanks to", "triggered",
+];
+const CONTEXT_CAUSAL: &[&str] = &[
+    "because", "since", "therefore", "consequently", "after",
+];
+const WEAK_CAUSAL: &[&str] = &[
+    "broke", "fixed",
+];
+const NEGATION: &[&str] = &[
+    "not", "never", "didn't", "wasn't", "isn't", "won't",
+    "can't", "couldn't", "wouldn't", "shouldn't", "no",
+];
+
 /// Cosine similarity between two vectors.
 pub fn cosine_sim(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
     let dot = a.dot(b);
@@ -88,14 +104,7 @@ pub fn absorb_memory(
         graph.add_edge(target_id, memory.id, weight, EdgeType::Association);
     }
 
-    // Step 7: Causal edge detection
-    // Look for temporal neighbors with causal language
-    let causal_keywords = [
-        "because", "caused by", "due to", "resulted in", "led to",
-        "broke", "fixed", "since", "therefore", "consequently",
-        "as a result", "thanks to", "triggered", "after",
-    ];
-
+    // Step 7: Tiered causal edge detection
     for existing in existing_memories {
         if existing.id == memory.id || existing.pattern.len() == 0 {
             continue;
@@ -109,28 +118,96 @@ pub fn absorb_memory(
         }
         let sim = cosine_sim(&memory.pattern, &existing.pattern);
         if sim < 0.3 || sim > 0.75 {
-            continue; // Too dissimilar or too similar (likely contradiction/duplicate)
+            continue;
         }
 
-        // Check for causal language -- require 2+ causal keywords to reduce false positives
-        let content_lower = memory.content.to_lowercase();
-        let causal_count = causal_keywords.iter()
-            .filter(|kw| content_lower.contains(*kw))
-            .count();
+        let combined = format!("{} {}", memory.content, existing.content).to_lowercase();
+        let words: Vec<&str> = combined.split_whitespace().collect();
+        let causal_score = compute_causal_score(&combined, &words);
 
-        if causal_count >= 2 {
-            // New memory references cause -> existing is the cause, new is the effect
-            graph.add_edge(existing.id, memory.id, sim, EdgeType::Causal);
-            // Also check reverse: if existing content has causal language pointing to new
+        if causal_score >= 3.0 {
+            // Halve edge weight to reduce over-connection
+            let edge_weight = sim * 0.5;
+            graph.add_edge(existing.id, memory.id, edge_weight, EdgeType::Causal);
+
+            // Check reverse direction too
             let existing_lower = existing.content.to_lowercase();
-            let existing_causal = causal_keywords.iter()
-                .filter(|kw| existing_lower.contains(*kw))
-                .count();
-            if existing_causal >= 2 {
-                graph.add_edge(memory.id, existing.id, sim, EdgeType::Causal);
+            let existing_words: Vec<&str> = existing_lower.split_whitespace().collect();
+            let reverse_score = compute_causal_score(&existing_lower, &existing_words);
+            if reverse_score >= 3.0 {
+                graph.add_edge(memory.id, existing.id, edge_weight, EdgeType::Causal);
             }
         }
     }
+}
+
+/// Compute tiered causal score with negation awareness.
+fn compute_causal_score(text: &str, words: &[&str]) -> f32 {
+    let mut score = 0.0f32;
+
+    // Collect word-level positions of all causal keywords for bigram context check
+    let mut all_kw_word_indices: Vec<usize> = Vec::new();
+    for (wi, _) in words.iter().enumerate() {
+        let prefix_len: usize = words[..wi].iter().map(|w| w.len() + 1).sum();
+        let remaining = &text[prefix_len..];
+        for kw in STRONG_CAUSAL.iter()
+            .chain(CONTEXT_CAUSAL.iter())
+            .chain(WEAK_CAUSAL.iter())
+        {
+            if remaining.starts_with(kw) {
+                all_kw_word_indices.push(wi);
+                break;
+            }
+        }
+    }
+
+    let has_negation = |word_idx: usize| -> bool {
+        let start = word_idx.saturating_sub(3);
+        (start..word_idx).any(|i| NEGATION.contains(&words[i]))
+    };
+
+    let has_nearby_causal = |word_idx: usize| -> bool {
+        all_kw_word_indices.iter().any(|&pos| {
+            pos != word_idx && (pos as isize - word_idx as isize).unsigned_abs() <= 5
+        })
+    };
+
+    for kw in STRONG_CAUSAL {
+        if let Some(pos) = text.find(kw) {
+            let word_idx = text[..pos].split_whitespace().count();
+            let mut pts = 2.0f32;
+            if word_idx < words.len() && has_negation(word_idx) {
+                pts *= 0.5;
+            }
+            score += pts;
+        }
+    }
+
+    for kw in CONTEXT_CAUSAL {
+        if let Some(pos) = text.find(kw) {
+            let word_idx = text[..pos].split_whitespace().count();
+            let negated = word_idx < words.len() && has_negation(word_idx);
+            let has_context = has_nearby_causal(word_idx);
+            let mut pts = if has_context { 2.0f32 } else { 0.5f32 };
+            if negated {
+                pts *= 0.5;
+            }
+            score += pts;
+        }
+    }
+
+    for kw in WEAK_CAUSAL {
+        if let Some(pos) = text.find(kw) {
+            let word_idx = text[..pos].split_whitespace().count();
+            let mut pts = 1.0f32;
+            if word_idx < words.len() && has_negation(word_idx) {
+                pts *= 0.5;
+            }
+            score += pts;
+        }
+    }
+
+    score
 }
 
 #[cfg(test)]

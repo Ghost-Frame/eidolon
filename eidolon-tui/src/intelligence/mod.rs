@@ -5,3 +5,4 @@ pub mod budget;
 pub mod selector;
 pub mod pipeline;
 pub mod synthesizer;
+pub mod json_repair;

@@ -142,19 +142,6 @@ impl Distiller {
 }
 
 fn extract_json_object(text: &str) -> Option<String> {
-    let start = text.find('{')?;
-    let mut depth = 0i32;
-    for (i, ch) in text[start..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(text[start..start + i + 1].to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    super::json_repair::extract_and_repair_json(text)
+        .map(|v| v.to_string())
 }
