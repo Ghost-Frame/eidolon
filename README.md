@@ -1,6 +1,6 @@
 # Eidolon
 
-Neural brain and transparent proxy for AI agents. Understands memories instead of searching them. Captures new ones without being asked.
+Neural brain for AI agents. Understands memories instead of searching them. Captures new ones without being asked.
 
 [![License](https://img.shields.io/badge/license-Elastic%202.0-orange)](LICENSE)
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange)](https://www.rust-lang.org/)
@@ -33,7 +33,6 @@ The brain corrects the agent using temporal understanding maintained across thou
 ### Capabilities
 
 - **Recall, not retrieval.** Queries activate patterns and complete them. The answer comes from the network's state, not from ranked documents.
-- **Transparent proxy.** Sits between Claude Code and the Anthropic API. Captures memories from conversations and injects relevant context into prompts. Invisible to the agent. No hooks, no MCP, no agent cooperation required.
 - **Contradiction resolution.** Conflicting memories compete. The network converges on the stronger, more current pattern.
 - **Natural decay.** Unused associations fade. Patterns that never get reinforced become unreachable over time.
 - **Dreaming.** Offline consolidation replays patterns, strengthens important connections, and resolves interference during idle periods.
@@ -48,17 +47,9 @@ The brain corrects the agent using temporal understanding maintained across thou
 ## Architecture
 
 ```
-Claude Code (or any Anthropic API client)
-    |
-    | ANTHROPIC_BASE_URL pointed at Eidolon
-    v
 +----------------------------------------------------------+
 |                     Eidolon Daemon                       |
 |               eidolon-daemon (Rust / axum)               |
-|                                                          |
-|  Transparent Proxy (/v1/messages)                        |
-|    Recall: Engram query -> Hopfield filter -> inject     |
-|    Capture: classify turns -> extract -> store           |
 |                                                          |
 |  Action Gate         Activity Fan-out     Growth         |
 |  /gate/check         /activity            /growth/*      |
@@ -94,50 +85,11 @@ Claude Code (or any Anthropic API client)
 
 **Brain Binary** (`eidolon`): Standalone executable for direct neural brain operations. Pattern completion, dreaming cycles, instinct generation, and brain diagnostics outside the daemon.
 
-**Guardian Daemon** (`eidolon-daemon`): Persistent service at `:7700`. Transparent API proxy for Claude Code, action gate, activity fan-out, prompt generation, growth reflection. The proxy intercepts Anthropic API traffic to capture memories and inject recall context without any agent-side configuration.
+**Guardian Daemon** (`eidolon-daemon`): Persistent service at `:7700`. Action gate, activity fan-out, prompt generation, growth reflection.
 
 **Terminal UI** (`eidolon-tui`): WIP. Interactive TUI with a local LLM sidecar (llama-server on GPU). See [Terminal UI](#terminal-ui-wip) below.
 
 **CLI** (`eidolon-cli`): Submit tasks and query status from the command line.
-
----
-
-## Transparent Proxy
-
-The primary integration path. Point `ANTHROPIC_BASE_URL` at Eidolon and every Claude Code session flows through it.
-
-```bash
-export ANTHROPIC_BASE_URL=http://your-eidolon-host:7700
-```
-
-Two pipelines run on every request:
-
-**Capture** (async, post-response): After streaming the response back to Claude Code, Eidolon diffs the conversation for new turns. Each turn gets classified through rule-based pattern matching and a local LLM (Ollama). Turns worth remembering get compressed into concise memories and stored to Engram. Most turns produce nothing. A typical 50-turn session yields 3-8 stored memories.
-
-**Recall** (pre-request, <200ms): Before forwarding to Anthropic, Eidolon queries Engram for context relevant to the current message. Candidates pass through the Hopfield network for associative filtering. Survivors get synthesized into a short `<engram-context>` block and injected into the system prompt. A differential check prevents re-injecting the same context on consecutive turns. Most turns inject nothing.
-
-The proxy forwards Anthropic API keys from the client. It does not use Eidolon's own auth for proxy routes.
-
-```toml
-[proxy]
-enabled = true
-anthropic_url = "https://api.anthropic.com"
-
-[proxy.capture]
-enabled = true
-classification_model = "qwen2.5:3b"
-ollama_url = "http://localhost:11434"
-novelty_threshold = 0.9
-max_memories_per_session = 20
-
-[proxy.recall]
-enabled = true
-max_tokens = 800
-staleness_threshold = 0.8
-engram_mode = "fast"
-```
-
-Both pipelines can be independently disabled for debugging.
 
 ---
 
@@ -209,7 +161,7 @@ Current state:
 - Growth reflections fire after each exchange
 - Conversation exchanges auto-store to Engram
 
-What remains: stability, connection resilience, and making it feel like a real daily-driver terminal rather than a prototype. The proxy handles Claude Code integration today. The TUI is the planned complement for direct interactive sessions where you want both a local model and the daemon's brain in the same interface.
+What remains: stability, connection resilience, and making it feel like a real daily-driver terminal rather than a prototype.
 
 ---
 
@@ -219,7 +171,6 @@ What remains: stability, connection resilience, and making it feel like a real d
 
 - Rust 1.75+
 - [Engram](https://github.com/Ghost-Frame/engram) running and accessible
-- Ollama with a small classification model (for proxy capture)
 
 ### Build
 
@@ -246,17 +197,6 @@ data_dir = "/path/to/eidolon/data"
 
 [engram]
 url = "http://localhost:4200"
-
-[proxy]
-enabled = true
-anthropic_url = "https://api.anthropic.com"
-
-[proxy.capture]
-classification_model = "qwen2.5:3b"
-ollama_url = "http://localhost:11434"
-
-[proxy.recall]
-max_tokens = 800
 ```
 
 ### Development Setup
@@ -274,12 +214,6 @@ export EIDOLON_API_KEY=your-key
 ./target/release/eidolon-daemon
 ```
 
-On client machines:
-
-```bash
-export ANTHROPIC_BASE_URL=http://your-eidolon-host:7700
-```
-
 ---
 
 ## Project Structure
@@ -288,12 +222,11 @@ export ANTHROPIC_BASE_URL=http://your-eidolon-host:7700
 eidolon/
   eidolon-lib/          # Neural substrate (Hopfield, graph, decay, dreaming, evolution)
   eidolon/              # Main binary (neural brain executable)
-  eidolon-daemon/       # Guardian daemon (HTTP API, proxy, gate, agent orchestration)
+  eidolon-daemon/       # Guardian daemon (HTTP API, gate, agent orchestration)
     src/
       agents/           # Agent registry and adapters (claude-code)
       embedding/        # Pluggable embedding providers (Engram, OpenAI, HTTP)
       prompt/           # Living prompt generator and templates
-      proxy/            # Transparent Anthropic API proxy (capture, recall, classify)
       routes/           # HTTP routes (activity, gate, brain, sessions, tasks, audit, growth)
       absorber.rs       # Session absorption back into brain
       session.rs        # Session lifecycle management

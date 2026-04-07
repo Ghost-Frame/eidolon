@@ -3,7 +3,6 @@ use tokio::sync::Mutex;
 
 use eidolon_daemon::*;
 use eidolon_daemon::config::Config;
-use eidolon_daemon::proxy::handler::ProxyState;
 use eidolon_daemon::scrubbing::ScrubRegistry;
 use eidolon_daemon::session::SessionManager;
 use eidolon_lib::brain::Brain;
@@ -215,19 +214,6 @@ async fn main() {
         None => None,
     };
 
-    // Init proxy state if enabled
-    let proxy_state = if config.proxy.enabled {
-        tracing::info!(
-            "proxy enabled: upstream={}, capture={}, recall={}",
-            config.proxy.anthropic_url,
-            config.proxy.capture.enabled,
-            config.proxy.recall.enabled,
-        );
-        Some(Arc::new(ProxyState::new()))
-    } else {
-        None
-    };
-
     let state = Arc::new(AppState {
         brain: Arc::new(Mutex::new(brain)),
         sessions: Arc::new(Mutex::new(session_manager)),
@@ -238,7 +224,6 @@ async fn main() {
         rate_limiter,
         audit_log,
         pending_approvals: tokio::sync::Mutex::new(std::collections::HashMap::new()),
-        proxy_state,
     });
 
     // Spawn dream cycle background task
@@ -327,19 +312,6 @@ async fn main() {
             loop {
                 interval.tick().await;
                 limiter.prune_expired();
-            }
-        });
-    }
-
-    // Spawn proxy session cleanup task (evict stale sessions every 10 minutes)
-    if let Some(ref proxy) = state.proxy_state {
-        let tracker = Arc::clone(&proxy.tracker);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                tracker.evict_stale(std::time::Duration::from_secs(7200)).await;
             }
         });
     }

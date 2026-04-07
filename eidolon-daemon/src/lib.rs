@@ -9,7 +9,6 @@ pub mod routes;
 pub mod scrubbing;
 pub mod secrets;
 pub mod server;
-pub mod proxy;
 pub mod session;
 
 use std::sync::Arc;
@@ -35,7 +34,6 @@ pub struct AppState {
     pub rate_limiter: Option<Arc<rate_limit::RateLimiter>>,
     pub audit_log: Option<Arc<audit::AuditLog>>,
     pub pending_approvals: tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
-    pub proxy_state: Option<Arc<proxy::handler::ProxyState>>,
 }
 
 impl AppState {

@@ -295,95 +295,6 @@ impl Default for AuditConfig {
     }
 }
 
-// --- Proxy config (transparent Anthropic API proxy for passive capture + smart recall) ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_anthropic_url")]
-    pub anthropic_url: String,
-    #[serde(default)]
-    pub capture: CaptureConfig,
-    #[serde(default)]
-    pub recall: RecallConfig,
-}
-
-fn default_anthropic_url() -> String {
-    "https://api.anthropic.com".to_string()
-}
-
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        ProxyConfig {
-            enabled: false,
-            anthropic_url: default_anthropic_url(),
-            capture: CaptureConfig::default(),
-            recall: RecallConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CaptureConfig {
-    #[serde(default = "default_capture_enabled")]
-    pub enabled: bool,
-    #[serde(default = "default_classification_model")]
-    pub classification_model: String,
-    #[serde(default = "default_ollama_url")]
-    pub ollama_url: String,
-    #[serde(default = "default_novelty_threshold")]
-    pub novelty_threshold: f32,
-    #[serde(default = "default_max_memories_per_session")]
-    pub max_memories_per_session: usize,
-}
-
-fn default_capture_enabled() -> bool { true }
-fn default_classification_model() -> String { "qwen2.5:3b".to_string() }
-fn default_ollama_url() -> String { "http://localhost:11434".to_string() }
-fn default_novelty_threshold() -> f32 { 0.9 }
-fn default_max_memories_per_session() -> usize { 20 }
-
-impl Default for CaptureConfig {
-    fn default() -> Self {
-        CaptureConfig {
-            enabled: true,
-            classification_model: default_classification_model(),
-            ollama_url: default_ollama_url(),
-            novelty_threshold: default_novelty_threshold(),
-            max_memories_per_session: default_max_memories_per_session(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RecallConfig {
-    #[serde(default = "default_recall_enabled")]
-    pub enabled: bool,
-    #[serde(default = "default_recall_max_tokens")]
-    pub max_tokens: usize,
-    #[serde(default = "default_staleness_threshold")]
-    pub staleness_threshold: f32,
-    #[serde(default = "default_engram_mode")]
-    pub engram_mode: String,
-}
-
-fn default_recall_enabled() -> bool { true }
-fn default_recall_max_tokens() -> usize { 800 }
-fn default_staleness_threshold() -> f32 { 0.8 }
-fn default_engram_mode() -> String { "fast".to_string() }
-
-impl Default for RecallConfig {
-    fn default() -> Self {
-        RecallConfig {
-            enabled: true,
-            max_tokens: default_recall_max_tokens(),
-            staleness_threshold: default_staleness_threshold(),
-            engram_mode: default_engram_mode(),
-        }
-    }
-}
-
 // --- Raw auth for TOML parsing (backwards compat) ---
 
 #[derive(Debug, Default, Deserialize)]
@@ -470,8 +381,6 @@ pub struct Config {
     pub growth: GrowthConfig,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
-    #[serde(default)]
-    pub proxy: ProxyConfig,
 }
 
 impl Default for Config {
@@ -493,7 +402,6 @@ impl Default for Config {
             audit: None,
             growth: GrowthConfig::default(),
             embedding: EmbeddingConfig::default(),
-            proxy: ProxyConfig::default(),
         }
     }
 }
@@ -528,8 +436,6 @@ struct RawConfig {
     growth: GrowthConfig,
     #[serde(default)]
     embedding: EmbeddingConfig,
-    #[serde(default)]
-    proxy: ProxyConfig,
 }
 
 impl Config {
@@ -612,7 +518,6 @@ impl Config {
             audit: raw.audit,
             growth: raw.growth,
             embedding: raw.embedding,
-            proxy: raw.proxy,
         })
     }
 
