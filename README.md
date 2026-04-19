@@ -1,3 +1,5 @@
+Eidolon now lives within Kleos: legacy standalone version now
+
 # Eidolon
 
 Neural brain for AI agents. Understands memories instead of searching them. Captures new ones without being asked.
