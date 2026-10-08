@@ -98,4 +98,4 @@ cargo test --workspace
 
 ## License
 
-Elastic License 2.0 (ELv2). See [LICENSE](LICENSE) for details.
+By submitting a contribution, you license it under the PolyForm Noncommercial License 1.0.0 and grant the project owner a perpetual, worldwide, irrevocable, royalty-free right to use, modify, sublicense, and relicense your contribution under any terms, including commercial terms.

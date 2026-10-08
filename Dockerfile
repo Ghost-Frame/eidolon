@@ -18,7 +18,7 @@ LABEL org.opencontainers.image.title="Eidolon" \
       org.opencontainers.image.description="Neural brain for AI agents" \
       org.opencontainers.image.url="https://codeberg.org/GhostFrame/eidolon" \
       org.opencontainers.image.source="https://codeberg.org/GhostFrame/eidolon" \
-      org.opencontainers.image.licenses="Elastic-2.0" \
+      org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
       org.opencontainers.image.vendor="Syntheos"
 
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
